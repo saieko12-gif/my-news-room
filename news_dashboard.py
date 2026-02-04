@@ -115,4 +115,84 @@ def get_news(search_terms):
                 'title': entry.title,
                 'link': entry.link,
                 'published': pub_date,
-                'summary': clean_summary, # <---
+                'summary': clean_summary, # <--- 청소된 요약문 저장
+                'source': entry.get('source', {}).get('title', 'Google News')
+            })
+            
+    return all_news
+
+# ---------------------------------------------------------
+# 5. 메인 로직 실행
+# ---------------------------------------------------------
+if st.button("🔄 최신 뉴스 다시 불러오기"):
+    st.cache_data.clear()
+
+with st.spinner('뉴스 긁어오는 중... 잠만 기다리바라...'):
+    news_list = get_news(keywords)
+
+# 날짜순 정렬
+news_list.sort(key=lambda x: x['published'], reverse=True)
+
+# 1차 필터링: 날짜
+date_filtered_news = []
+if news_list:
+    now = datetime.now(news_list[0]['published'].tzinfo) 
+
+    for news in news_list:
+        pub_date = news['published']
+        if period_option == "최근 24시간":
+            if (now - pub_date) > timedelta(hours=24): continue
+        elif period_option == "최근 3일":
+            if (now - pub_date) > timedelta(days=3): continue
+        elif period_option == "최근 1주일":
+            if (now - pub_date) > timedelta(days=7): continue
+        elif period_option == "최근 1개월":
+            if (now - pub_date) > timedelta(days=30): continue
+            
+        date_filtered_news.append(news)
+
+# 결과 출력 UI
+if not date_filtered_news:
+    st.warning("조건에 맞는 뉴스가 없다! 기간을 좀 늘려보래이.")
+else:
+    st.divider()
+    
+    # 필터링 UI
+    st.subheader(f"🔎 검색된 뉴스 총 {len(date_filtered_news)}건 분석")
+    col_filter1, col_filter2 = st.columns([1, 2])
+    
+    with col_filter1:
+        search_query = st.text_input("텍스트 검색 (제목)", placeholder="예: 삼성, 매각...")
+    
+    found_keywords = list(set([n['keyword'] for n in date_filtered_news]))
+    with col_filter2:
+        selected_keywords = st.multiselect(
+            "보고 싶은 키워드만 선택 (기본: 전체 선택)",
+            options=found_keywords,
+            default=found_keywords
+        )
+    
+    # 2차 필터링
+    final_news = []
+    for news in date_filtered_news:
+        if news['keyword'] not in selected_keywords: continue
+        if search_query and (search_query not in news['title']): continue
+        final_news.append(news)
+    
+    st.success(f"필터 적용 후: **{len(final_news)}개** 뉴스 표시 중")
+    
+    # 뉴스 카드 출력 (여기가 바뀜!)
+    for news in final_news:
+        date_str = news['published'].strftime("%Y-%m-%d %H:%M")
+        
+        with st.expander(f"[{news['keyword']}] {news['title']}"):
+            # [추가] 여기에 미리보기 내용을 보여준다!
+            if news['summary']:
+                st.caption("📝 미리보기:") 
+                st.info(news['summary']) # 파란색 박스 안에 요약문 넣기
+            
+            st.write(f"**출처:** {news['source']} | **일시:** {date_str}")
+            st.link_button("기사 원문 보러가기 👉", news['link'])
+
+    if len(final_news) == 0:
+        st.info("필터링 조건에 맞는 기사가 없다.")
