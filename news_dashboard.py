@@ -145,8 +145,8 @@ else:
             plot_bgcolor='rgba(0,0,0,0)', 
             xaxis_title="", 
             yaxis_title="",
-            height=400, # 높이 적당히
-            margin=dict(l=0, r=0, t=30, b=0) # 여백 조절
+            height=250, # 높이 적당히
+            margin=dict(l=0, r=0, t=20, b=0) # 여백 조절
         )
         
         # 순서 정렬 (뉴스 많은 순서대로 위로 가게)
@@ -195,3 +195,4 @@ else:
 
     if len(final_news) == 0:
         st.info("조건에 맞는 기사가 없다.")
+
