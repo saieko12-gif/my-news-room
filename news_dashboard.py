@@ -11,7 +11,7 @@ import FinanceDataReader as fdr
 from PublicDataReader import Kosis 
 from datetime import datetime, timedelta
 from dateutil import parser
-from dateutil.relativedelta import relativedelta # 날짜 계산용
+from dateutil.relativedelta import relativedelta 
 
 # ---------------------------------------------------------
 # 1. 설정 & 스타일
@@ -43,7 +43,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# [중요] API 키 설정
+# [중요] API 키
 DART_API_KEY = "3522c934d5547db5cba3f51f8d832e1a82ebce55"
 KOSIS_API_KEY = "ZDIxY2M0NTFmZThmNTZmNWZkOGYwYzYyNTMxMGIyNjg="
 
@@ -57,7 +57,7 @@ st.sidebar.header("🛠️ 설정")
 mode = st.sidebar.radio("모드 선택", ["📰 뉴스 모니터링", "🏢 기업 공시 & 재무제표", "🏗️ 건설/부동산 통계"])
 
 # ---------------------------------------------------------
-# 3. 데이터 수집 함수 (기간 필터링 기능 추가!)
+# 3. 데이터 수집 함수
 # ---------------------------------------------------------
 def clean_html(raw_html):
     if not raw_html: return ""
@@ -92,18 +92,18 @@ def get_dart_system():
     except Exception as e:
         return None
 
-# [속도 개선] 기간(start, end)을 받아서 그만큼만 긁어오도록 수정!
+# [핵심] KOSIS 직통 데이터 가져오기
 @st.cache_data(ttl=3600) 
-def get_kosis_data_period(search_nm, start_date, end_date):
+def get_kosis_data_direct(org_id, tbl_id, start_date, end_date):
     try:
         api = Kosis(KOSIS_API_KEY)
-        # KOSIS API 파라미터: startPrdDe, endPrdDe (YYYYMM 형식)
         df = api.get_data(
             "KOSIS통합검색", 
-            searchNm=search_nm,
+            orgId=org_id,
+            tblId=tbl_id,
             startPrdDe=start_date,
             endPrdDe=end_date,
-            prdSe="M" # 월별 데이터로 고정 (대부분의 건설 통계는 월별임)
+            prdSe="M" 
         )
         return df
     except:
@@ -322,18 +322,16 @@ elif mode == "🏢 기업 공시 & 재무제표":
                 except: st.error("공시 로딩 실패")
 
 # ---------------------------------------------------------
-# [탭 3] 건설/부동산 통계
+# [탭 3] 건설/부동산 통계 (요약 & 속도 최적화 버전)
 # ---------------------------------------------------------
 elif mode == "🏗️ 건설/부동산 통계":
     st.title("🏗️ 건설 & 부동산 시장 통계")
-    st.markdown("통계청(KOSIS) 데이터를 실시간으로 가져온데이. **영업의 미래는 숫자에 있다!**")
+    st.markdown("통계청(KOSIS) 데이터를 실시간으로 요약해 준데이. **(단위: 호, ㎡)**")
     
-    # [수정] 기간 설정 옵션 추가
     col_p1, col_p2 = st.columns([1, 3])
     with col_p1:
         date_opt = st.selectbox("조회 기간 설정", ["최근 3년 (기본)", "최근 1년 (빠름)", "직접 입력"])
     
-    # 날짜 계산 (YYYYMM 형식)
     now = datetime.now()
     if date_opt == "최근 3년 (기본)":
         start_date = (now - relativedelta(years=3)).strftime("%Y%m")
@@ -341,15 +339,14 @@ elif mode == "🏗️ 건설/부동산 통계":
     elif date_opt == "최근 1년 (빠름)":
         start_date = (now - relativedelta(years=1)).strftime("%Y%m")
         end_date = now.strftime("%Y%m")
-    else: # 직접 입력
+    else: 
         c_y1, c_y2 = st.columns(2)
         s_y = c_y1.text_input("시작 년월 (예: 202001)", value=(now - relativedelta(years=3)).strftime("%Y%m"))
         e_y = c_y2.text_input("종료 년월 (예: 202401)", value=now.strftime("%Y%m"))
         start_date = s_y
         end_date = e_y
     
-    user_key = st.text_input("🔑 KOSIS API Key (비워두면 저장된 키 사용)", type="password")
-    final_key = user_key if user_key else KOSIS_API_KEY
+    # API 키 입력창 삭제 (내장 키 사용)
     
     stat_type = st.radio("보고 싶은 통계 선택", 
                          ["📉 미분양주택현황 (위험신호)", 
@@ -359,41 +356,74 @@ elif mode == "🏗️ 건설/부동산 통계":
                          horizontal=True)
     
     if st.button("📊 데이터 가져오기"):
-        # 함수 호출 시 start_date, end_date를 같이 넘김
         with st.spinner("통계청 서버 털어오는 중..."):
             
-            # API 호출 함수 (내부적으로 캐싱)
-            search_nm = ""
-            if "미분양" in stat_type: search_nm = "미분양주택현황"
-            elif "건축허가" in stat_type: search_nm = "건축허가현황"
-            elif "주택매매" in stat_type: search_nm = "아파트매매거래현황"
-            elif "주택준공" in stat_type: search_nm = "주택준공실적"
+            org_id = ""; tbl_id = ""
+            if "미분양" in stat_type: 
+                org_id = "11601"; tbl_id = "DT_1YL202001E"
+            elif "건축허가" in stat_type: 
+                org_id = "11601"; tbl_id = "DT_11601_202005"
+            elif "주택매매" in stat_type: 
+                org_id = "40801"; tbl_id = "DT_40801_26"
+            elif "주택준공" in stat_type: 
+                org_id = "11601"; tbl_id = "DT_11601_202004"
             
-            df = get_kosis_data_period(search_nm, start_date, end_date)
+            df = get_kosis_data_direct(org_id, tbl_id, start_date, end_date)
             
             if df is not None:
                 st.subheader(f"📊 {stat_type.split()[1]} ({start_date} ~ {end_date})")
                 
-                # 최신 데이터 날짜 확인
-                latest_date = df['PRD_DE'].max()
-                st.success(f"데이터 로딩 완료 (최신: {latest_date})")
-                
-                # 데이터 타입 변환 (문자 -> 숫자)
-                df['DT'] = pd.to_numeric(df['DT'], errors='coerce')
-                
-                # 1. 최신 시점의 지역별 비교 (바 차트)
-                target_df = df[df['PRD_DE'] == latest_date]
-                chart_df = target_df[~target_df['C1_NM'].str.contains("전국|수도권|지방")]
-                chart_df = chart_df.sort_values(by='DT', ascending=False).head(15)
-                
-                fig_bar = px.bar(chart_df, x='C1_NM', y='DT', text='DT', title=f"지역별 TOP 15 ({latest_date})", color='DT', color_continuous_scale='Blues')
-                st.plotly_chart(fig_bar, use_container_width=True)
-                
-                # 2. 전국 기준 시계열 추이 (라인 차트)
-                ts_df = df[df['C1_NM'] == '전국'].sort_values('PRD_DE')
-                fig_line = px.line(ts_df, x='PRD_DE', y='DT', markers=True, title=f"전국 {stat_type.split()[1]} 추이")
-                st.plotly_chart(fig_line, use_container_width=True)
-                
-                with st.expander("📄 원본 데이터 보기"): st.dataframe(df)
+                # 데이터 전처리: 필요한 컬럼만 딱 남기기
+                # 'PRD_DE': 시점, 'C1_NM': 지역, 'DT': 값
+                if 'DT' in df.columns:
+                    df['DT'] = pd.to_numeric(df['DT'], errors='coerce')
+                    
+                    # [핵심] 불필요한 하위 행정구역(구/군) 날리고 시/도만 남기기
+                    # 통계청 데이터에는 '종로구', '수성구' 같은 게 섞여 있음. 
+                    # 1차적으로 '전국', '수도권', '지방' 그리고 '시/도' 이름만 필터링하는 게 깔끔함.
+                    # 주요 시도 리스트 정의
+                    major_regions = ["전국", "서울", "부산", "대구", "인천", "광주", "대전", "울산", "세종", "경기", "강원", "충북", "충남", "전북", "전남", "경북", "경남", "제주"]
+                    
+                    # C1_NM이 major_regions에 포함되는 것만 남기거나, 
+                    # 혹은 데이터가 너무 많으면 '전국' + '대구' + '경북' 만 딱 보여줄 수도 있음.
+                    # 여기서는 전체 시도만 필터링함.
+                    
+                    # 필터링 로직: C1_NM이 주요 시도 이름으로 시작하는 것만 남김
+                    filtered_df = df[df['C1_NM'].apply(lambda x: any(x.startswith(r) for r in major_regions))]
+                    
+                    # 컬럼 이름 깔끔하게 변경
+                    view_df = filtered_df[['PRD_DE', 'C1_NM', 'DT']].copy()
+                    view_df.columns = ['시점', '지역', '데이터(호/㎡)']
+                    
+                    # 피벗 테이블 만들기 (행: 시점, 열: 지역, 값: 데이터) -> 엑셀처럼 보기 편함
+                    pivot_df = view_df.pivot(index='시점', columns='지역', values='데이터(호/㎡)')
+                    pivot_df = pivot_df.sort_index(ascending=False) # 최신순 정렬
+
+                    # 1. 최신 현황 차트 (Bar) - 지역별 비교
+                    latest_date = df['PRD_DE'].max()
+                    st.info(f"📅 **{latest_date} 기준** 최신 현황 (단위: 호 or ㎡)")
+                    
+                    # 차트용 데이터 (전국/수도권 제외하고 순수 지역만)
+                    chart_target = view_df[view_df['시점'] == latest_date]
+                    chart_target = chart_target[~chart_target['지역'].str.contains("전국|수도권|지방")]
+                    chart_target = chart_target.sort_values(by='데이터(호/㎡)', ascending=False).head(17) # 17개 시도
+                    
+                    fig_bar = px.bar(chart_target, x='지역', y='데이터(호/㎡)', text='데이터(호/㎡)', color='데이터(호/㎡)', color_continuous_scale='Reds')
+                    st.plotly_chart(fig_bar, use_container_width=True)
+
+                    # 2. 내 관심 지역 추세 (Line) - 대구/경북/전국
+                    st.markdown("##### 📈 주요 지역 추세 (대구/경북/전국)")
+                    trend_regions = ["전국", "대구", "경북"]
+                    trend_df = view_df[view_df['지역'].isin(trend_regions)].sort_values('시점')
+                    
+                    fig_line = px.line(trend_df, x='시점', y='데이터(호/㎡)', color='지역', markers=True)
+                    st.plotly_chart(fig_line, use_container_width=True)
+
+                    # 3. 전체 요약 표 (피벗)
+                    with st.expander("📄 전체 시도별 데이터 표 보기 (클릭)"):
+                        st.dataframe(pivot_df)
+                else:
+                    st.error("데이터 형식 문제 발생. 원본 데이터 확인 필요.")
+                    st.write(df.head())
             else:
                 st.error("데이터 못 가져왔다. (API 키 확인 또는 기간을 줄여봐라)")
