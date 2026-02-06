@@ -3,3 +3,4 @@ feedparser
 finance-datareader
 pandas
 plotly
+opendartreader
