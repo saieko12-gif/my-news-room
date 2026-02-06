@@ -8,7 +8,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 import OpenDartReader
 import FinanceDataReader as fdr
-# import difflib  <-- [삭제] 속도 저하 주범 검거 및 삭제
 from datetime import datetime, timedelta
 from dateutil import parser
 
@@ -65,22 +64,18 @@ def clean_html(raw_html):
     cleanr = re.compile('<.*?>')
     return re.sub(cleanr, '', raw_html)[:150] + "..." 
 
-# [핵심] 제목 정규화 (꼬리표 제거) - 단순 비교용
+# 제목 정규화 (중복 제거용)
 def normalize_title(title):
-    # 1. 대괄호 [] 안의 내용 제거 (예: [속보], [단독])
     title = re.sub(r'\[.*?\]', '', title)
-    # 2. 뒤에 붙은 언론사 이름 등 꼬리표 제거
-    # ' - ' 또는 ' | ' 또는 '...' 등을 기준으로 자름
     title = title.split(' - ')[0]
     title = title.split(' | ')[0]
-    title = title.split('...')[0] # 말줄임표 뒤도 날림
-    # 3. 공백 제거 및 리턴
+    title = title.split('...')[0]
     return title.strip()
 
 @st.cache_data(ttl=600)
 def get_news(search_terms):
     all_news = []
-    seen_titles = set() # [변경] set을 써서 검색 속도 O(1)로 최적화
+    seen_titles = set()
 
     for term in search_terms:
         encoded_term = urllib.parse.quote(term)
@@ -89,22 +84,17 @@ def get_news(search_terms):
         
         for entry in feed.entries:
             raw_title = entry.title
-            # 정제된 제목 생성 (꼬리표 뗀 거)
             clean_t = normalize_title(raw_title) 
             
-            # [초고속 중복 검사] 
-            # 계산 안 하고, 그냥 장부(set)에 있는지만 확인 -> 0.0001초 컷
-            if clean_t in seen_titles:
-                continue # 중복이면 패스
-            
-            seen_titles.add(clean_t) # 장부에 등록
+            if clean_t in seen_titles: continue
+            seen_titles.add(clean_t)
             
             try: pub_date = parser.parse(entry.published)
             except: pub_date = datetime.now()
             
             all_news.append({
                 'keyword': term,
-                'title': raw_title, # 보여줄 땐 원본 제목
+                'title': raw_title,
                 'link': entry.link,
                 'published': pub_date,
                 'summary': clean_html(entry.get('description', '')),
@@ -120,6 +110,7 @@ def get_dart_system():
     except Exception as e:
         return None
 
+# [핵심 업데이트] 재무제표에서 부채비율, 자산총계 추가 계산
 def get_financial_summary_advanced(dart, corp_name):
     years = [2025, 2024]
     codes = [('11011','사업보고서'), ('11014','3분기'), ('11012','반기'), ('11013','1분기')]
@@ -128,33 +119,73 @@ def get_financial_summary_advanced(dart, corp_name):
             try:
                 fs = dart.finstate(corp_name, year, reprt_code=code)
                 if fs is None or fs.empty: continue
+                
+                # 연결 우선, 없으면 개별
                 t_fs = fs[fs['fs_div']=='CFS']
                 if t_fs.empty: t_fs = fs[fs['fs_div']=='OFS']
+                
                 def gv(nms):
                     for nm in nms:
                         r = t_fs[t_fs['account_nm']==nm]
                         if not r.empty:
                             try:
+                                # 당기 금액
                                 ts = r.iloc[0].get('thstrm_add_amount', r.iloc[0]['thstrm_amount'])
                                 if pd.isna(ts) or ts=='': ts = r.iloc[0]['thstrm_amount']
+                                # 전기 금액
                                 ps = r.iloc[0].get('frmtrm_add_amount', r.iloc[0]['frmtrm_amount'])
                                 if pd.isna(ps) or ps=='': ps = r.iloc[0]['frmtrm_amount']
-                                tv = float(str(ts).replace(',','')); pv = 0 if (pd.isna(ps) or ps=='') else float(str(ps).replace(',',''))
+                                
+                                # 숫자 변환
+                                tv = float(str(ts).replace(',',''))
+                                pv = 0 if (pd.isna(ps) or ps=='') else float(str(ps).replace(',',''))
+                                
+                                # 증감율
                                 dt = f"{((tv-pv)/pv)*100:.1f}%" if pv!=0 else None
-                                return "{:,} 억".format(int(tv/100000000)), dt, "{:,} 억".format(int(pv/100000000))
+                                
+                                return tv, dt, pv, "{:,} 억".format(int(tv/100000000)) # (숫자값, 증감율, 작년값, 포맷팅된문자열)
                             except: continue
-                    return "-", None, "-"
-                sn,sd,sp = gv(['매출액', '수익(매출액)'])
-                if sn == "-": continue
-                on,od,op = gv(['영업이익', '영업이익(손실)']); nn,nd,np = gv(['당기순이익', '당기순이익(손실)'])
-                rn = ""
+                    return None, None, None, "-"
+
+                # 1. 기본 실적 (매출, 영업이익, 순이익)
+                sn_val, sd, sp_val, sn_str = gv(['매출액', '수익(매출액)'])
+                on_val, od, op_val, on_str = gv(['영업이익', '영업이익(손실)'])
+                nn_val, nd, np_val, nn_str = gv(['당기순이익', '당기순이익(손실)'])
+                
+                if sn_str == "-": continue # 매출 없으면 패스
+
+                # 2. 안정성 지표 (자산, 부채, 자본) -> 부채비율 계산용
+                assets_val, _, _, assets_str = gv(['자산총계'])
+                liab_val, _, _, liab_str = gv(['부채총계'])
+                equity_val, _, _, equity_str = gv(['자본총계'])
+
+                # [계산기] 지표 계산
+                # 영업이익률 (OPM)
+                opm = 0
+                if sn_val and sn_val != 0: opm = (on_val / sn_val) * 100
+                
+                # 부채비율 (Debt Ratio) - 낮을수록 안전 (보통 200% 이하면 양호)
+                debt_ratio = 0
+                if equity_val and equity_val != 0: debt_ratio = (liab_val / equity_val) * 100
+
+                rn = "" # 보고서 링크 찾기
                 try:
                     rl = dart.list(corp_name, start=f"{year}-01-01", end=f"{year}-12-31", kind='A')
                     kw = "사업보고서" if code=='11011' else ("분기" if code=='11014' else "반기")
                     for i,r in rl.iterrows():
                         if kw in r['report_nm']: rn = r['rcept_no']; break
                 except: pass
-                return {"title": f"{year}년 {c_name} (누적)", "매출":(sn,sd,sp), "영업":(on,od,op), "순익":(nn,nd,np), "link":rn}
+                
+                return {
+                    "title": f"{year}년 {c_name} (누적)", 
+                    "매출": (sn_str, sd, "{:,} 억".format(int(sp_val/100000000)) if sp_val else "-"), 
+                    "영업": (on_str, od, "{:,} 억".format(int(op_val/100000000)) if op_val else "-"), 
+                    "순익": (nn_str, nd, "{:,} 억".format(int(np_val/100000000)) if np_val else "-"),
+                    "자산": assets_str,
+                    "부채비율": f"{debt_ratio:.1f}%",
+                    "영업이익률": f"{opm:.1f}%",
+                    "link": rn
+                }
             except: continue
     return None
 
@@ -320,10 +351,20 @@ elif mode == "🏢 기업 공시 & 재무제표":
             sm = get_financial_summary_advanced(dart, tgt)
             if sm:
                 st.markdown(f"**📌 {sm['title']}** (전년 대비)")
+                
+                # [NEW] 확장된 지표 표시 (영업이익률, 부채비율, 자산총계)
                 c1,c2,c3 = st.columns(3)
                 c1.metric("매출(누적)", sm['매출'][0], sm['매출'][1]); c1.caption(f"작년: {sm['매출'][2]}")
-                c2.metric("영업이익", sm['영업'][0], sm['영업'][1]); c2.caption(f"작년: {sm['영업'][2]}")
+                c2.metric("영업이익", sm['영업'][0], sm['영업'][1]); c2.caption(f"이익률: {sm['영업이익률']}") # 영업이익률 표시
                 c3.metric("순이익", sm['순익'][0], sm['순익'][1]); c3.caption(f"작년: {sm['순익'][2]}")
+                
+                st.markdown("---")
+                
+                # 안정성 & 규모 지표 (추가된 부분)
+                k1, k2 = st.columns(2)
+                k1.metric("자산총계 (체급)", sm['자산'], help="회사의 전체 규모(자산)")
+                k2.metric("부채비율 (안정성)", sm['부채비율'], help="100% 이하면 매우 안전, 200% 이상이면 주의 필요")
+                
                 if sm['link']: st.link_button("📄 원문 보고서", f"http://dart.fss.or.kr/dsaf001/main.do?rcpNo={sm['link']}")
             else: st.warning("재무 데이터 없음")
 
