@@ -35,7 +35,7 @@ st.sidebar.header("🛠️ 검색 조건 설정")
 
 preset_hotel = "호텔 리모델링, 신규 호텔 오픈, 리조트 착공, 5성급 호텔 리뉴얼, 호텔 FF&E, 생활숙박시설 분양, 호텔 매각, 샌즈"
 preset_office = "사옥 이전, 통합 사옥 건립, 스마트 오피스, 기업 연수원 건립, 공공청사 리모델링, 공유 오피스 출점, 오피스 인테리어, 데이터센터"
-preset_market = "건자재 가격, 친환경 자재, 모듈러 주택, LX하우시스, 현대건설 수주, GS건설 수주, DL건설, DL이앤씨, 현대엔지니어링"
+preset_market = "건자재 가격, 친환경 자재, 모듈러 주택, 현대건설 수주, GS건설 수주, 디엘건설, 디엘이앤씨, 현대엔지니어링"
 preset_all = f"{preset_hotel}, {preset_office}, {preset_market}"
 
 if 'search_keywords' not in st.session_state:
@@ -118,9 +118,9 @@ else:
     st.divider()
     
     # ==========================================
-    # [디자인 업그레이드] 세련된 차트 배치
+    # [수정됨] 도넛 차트 빼고 막대만 꽉 채움!
     # ==========================================
-    st.subheader("📊 키워드 트렌드 대시보드")
+    st.subheader("📊 키워드별 이슈 트렌드")
     
     df = pd.DataFrame(date_filtered_news)
     
@@ -128,43 +128,31 @@ else:
         keyword_counts = df['keyword'].value_counts().reset_index()
         keyword_counts.columns = ['키워드', '뉴스 개수']
         
-        # 화면을 2:1 비율로 나눈다 (왼쪽이 넓게)
-        chart_col1, chart_col2 = st.columns([2, 1])
+        # 가로 막대 차트 (이제 화면 꽉 차게 나옴)
+        fig_bar = px.bar(
+            keyword_counts, 
+            x='뉴스 개수', 
+            y='키워드', 
+            orientation='h', 
+            text='뉴스 개수', 
+            color='뉴스 개수', 
+            color_continuous_scale='Teal', 
+            title="" # 제목은 위 subheader가 있으니 생략
+        )
         
-        # 1. 왼쪽: 가로 막대 차트 (깔끔하게)
-        with chart_col1:
-            fig_bar = px.bar(
-                keyword_counts, 
-                x='뉴스 개수', 
-                y='키워드', 
-                orientation='h', # 가로로 눕히기
-                text='뉴스 개수', 
-                color='뉴스 개수', # 개수에 따라 색 농도 조절
-                color_continuous_scale='Teal', # 세련된 청록색 계열
-                title="🔥 키워드별 뉴스 발생량 (Top 이슈)"
-            )
-            # 불필요한 배경/테두리 제거 (심플함의 극치)
-            fig_bar.update_layout(
-                plot_bgcolor='rgba(0,0,0,0)', 
-                xaxis_title="", 
-                yaxis_title="",
-                height=350 # 높이 조절
-            )
-            st.plotly_chart(fig_bar, use_container_width=True)
-            
-        # 2. 오른쪽: 도넛 차트 (세련되게)
-        with chart_col2:
-            fig_pie = px.pie(
-                keyword_counts, 
-                values='뉴스 개수', 
-                names='키워드',
-                hole=0.4, # 가운데 구멍 뚫어서 도넛 모양
-                color_discrete_sequence=px.colors.qualitative.Pastel, # 파스텔톤
-                title="📈 점유율 분석"
-            )
-            fig_pie.update_traces(textposition='inside', textinfo='percent+label')
-            fig_pie.update_layout(showlegend=False, height=350) # 범례 숨기고 심플하게
-            st.plotly_chart(fig_pie, use_container_width=True)
+        # 디자인 다듬기 (깔끔하게)
+        fig_bar.update_layout(
+            plot_bgcolor='rgba(0,0,0,0)', 
+            xaxis_title="", 
+            yaxis_title="",
+            height=400, # 높이 적당히
+            margin=dict(l=0, r=0, t=30, b=0) # 여백 조절
+        )
+        
+        # 순서 정렬 (뉴스 많은 순서대로 위로 가게)
+        fig_bar.update_yaxes(categoryorder='total ascending')
+        
+        st.plotly_chart(fig_bar, use_container_width=True)
 
     # ==========================================
     
