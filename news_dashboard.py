@@ -8,6 +8,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import OpenDartReader
 import FinanceDataReader as fdr
+import difflib # [NEW] 텍스트 유사도 비교용 내장 라이브러리 (가볍다!)
 from datetime import datetime, timedelta
 from dateutil import parser
 
@@ -64,10 +65,20 @@ def clean_html(raw_html):
     cleanr = re.compile('<.*?>')
     return re.sub(cleanr, '', raw_html)[:150] + "..." 
 
+# [NEW] 제목 정규화 함수 (비교를 위해 꼬리표 떼기)
+def normalize_title(title):
+    # 1. 대괄호 [] 안의 내용 제거 (예: [속보], [단독])
+    title = re.sub(r'\[.*?\]', '', title)
+    # 2. 뒤에 붙은 언론사 이름 제거 (예: ... - 네이트, ... - 이데일리)
+    title = title.split(' - ')[0]
+    title = title.split(' | ')[0]
+    # 3. 공백 제거하고 리턴
+    return title.strip()
+
 @st.cache_data(ttl=600)
 def get_news(search_terms):
     all_news = []
-    seen_titles = set()  # [핵심] 중복 제목 체크용 장부
+    seen_titles = [] # [NEW] 단순 제목이 아니라 '정제된 제목' 리스트를 저장
 
     for term in search_terms:
         encoded_term = urllib.parse.quote(term)
@@ -75,19 +86,27 @@ def get_news(search_terms):
         feed = feedparser.parse(url)
         
         for entry in feed.entries:
-            # 1. 제목 가져오기
-            title = entry.title
+            raw_title = entry.title
+            clean_t = normalize_title(raw_title) # 비교용 알맹이 제목
             
-            # 2. 중복 검사 (장부에 없으면 통과)
-            if title not in seen_titles:
-                seen_titles.add(title) # 장부에 등록
+            # [핵심 로직] 유사도 80% 이상인지 검사
+            is_duplicate = False
+            for existing_title in seen_titles:
+                # difflib로 유사도 계산 (0.0 ~ 1.0)
+                similarity = difflib.SequenceMatcher(None, clean_t, existing_title).ratio()
+                if similarity >= 0.8: # 80% 이상 비슷하면 중복으로 간주
+                    is_duplicate = True
+                    break
+            
+            if not is_duplicate:
+                seen_titles.append(clean_t) # 장부에 등록
                 
                 try: pub_date = parser.parse(entry.published)
                 except: pub_date = datetime.now()
                 
                 all_news.append({
                     'keyword': term,
-                    'title': title,
+                    'title': raw_title, # 보여줄 때는 원본 제목 보여줌
                     'link': entry.link,
                     'published': pub_date,
                     'summary': clean_html(entry.get('description', '')),
@@ -204,7 +223,7 @@ if mode == "📰 뉴스 모니터링":
     
     if st.button("🔄 뉴스 새로고침"): st.cache_data.clear()
 
-    with st.spinner('뉴스 수집 중...'):
+    with st.spinner('뉴스 수집 중... (중복 제거 필터 가동 중 🧹)'):
         news = get_news(keywords)
     news.sort(key=lambda x: x['published'], reverse=True)
     
@@ -261,7 +280,6 @@ elif mode == "🏢 기업 공시 & 재무제표":
                     matches = cdf[cdf['corp_name'].str.contains(search_txt, na=False)]
                     
                     if not matches.empty:
-                        # 상장사(stock_code 있음) 우선 정렬
                         matches['is_listed'] = matches['stock_code'].apply(lambda x: 0 if x and str(x).strip() != '' else 1)
                         matches = matches.sort_values(by='is_listed')
                         
