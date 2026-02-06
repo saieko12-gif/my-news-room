@@ -30,16 +30,16 @@ except:
     pass
 
 st.title("💼 B2B 영업 인텔리전스 (News & DART)")
-st.markdown("뉴스 트렌드와 기업 공시를 한눈에! **스마트한 영업맨의 비밀무기**")
+st.markdown("뉴스, 공시, 그리고 **재무제표**까지 한방에! **스마트한 영업맨의 비밀무기**")
 
 # ---------------------------------------------------------
 # 2. 사이드바 (모드 선택)
 # ---------------------------------------------------------
 st.sidebar.header("🛠️ 검색 조건 설정")
-mode = st.sidebar.radio("모드 선택", ["📰 뉴스 모니터링", "🏢 기업 공시 검색"])
+mode = st.sidebar.radio("모드 선택", ["📰 뉴스 모니터링", "🏢 기업 공시 & 재무제표"])
 
 # ---------------------------------------------------------
-# 3. 공통 함수 (뉴스 & DART)
+# 3. 공통 함수
 # ---------------------------------------------------------
 def clean_html(raw_html):
     if not raw_html: return ""
@@ -68,15 +68,66 @@ def get_news(search_terms):
             })
     return all_news
 
-# [수정] DART 시스템 로딩 (회사 목록까지 싹 가져옴)
 @st.cache_resource
 def get_dart_system():
     try:
         dart = OpenDartReader(DART_API_KEY) 
-        # 처음 한 번 회사 목록(corp_codes)을 로딩해둔다 (약간 걸림)
         return dart
     except Exception as e:
         return None
+
+# [신규 기능] 재무제표 긁어오는 함수 (가장 최신꺼 찾기)
+def get_financial_summary(dart, corp_name):
+    # 최근 2년치(2025, 2024) 시도
+    years = [2025, 2024]
+    
+    for year in years:
+        try:
+            # 11011: 사업보고서 (연간 확정)
+            # 11013: 3분기보고서 (최신) -> 보통 3분기가 가장 늦게까지 남아있음
+            # 우선 2025년 3분기나 2024년 사업보고서를 찾음
+            
+            # fs: 재무제표 데이터프레임
+            fs = dart.finstate(corp_name, year, reprt_code='11011') # 일단 연간보고서 시도
+            if fs is None:
+                fs = dart.finstate(corp_name, year, reprt_code='11013') # 없으면 3분기 시도
+            
+            if fs is not None:
+                # 필요한 항목만 뽑아내기 (연결재무제표 기준)
+                # fs['fs_nm'] == '연결재무제표' 또는 '재무제표'
+                target_fs = fs[fs['fs_div'] == 'CFS'] # 연결재무제표 우선
+                if target_fs.empty:
+                    target_fs = fs[fs['fs_div'] == 'OFS'] # 없으면 별도재무제표
+
+                # 주요 항목 추출 (매출, 영업이익, 당기순이익, 자산, 부채, 자본)
+                # account_nm에 따라 값 찾기
+                def get_value(account_names):
+                    for nm in account_names:
+                        row = target_fs[target_fs['account_nm'] == nm]
+                        if not row.empty:
+                            # 3자리마다 콤마 찍기 위해 숫자로 변환 후 포맷팅
+                            val = row.iloc[0]['thstrm_amount']
+                            try:
+                                return "{:,} 억".format(int(float(val.replace(',','')) / 100000000)) # 억원 단위
+                            except:
+                                return val
+                    return "-"
+
+                summary = {
+                    "기준년도": f"{year}년",
+                    "매출액": get_value(['매출액', '수익(매출액)']),
+                    "영업이익": get_value(['영업이익', '영업이익(손실)']),
+                    "당기순이익": get_value(['당기순이익', '당기순이익(손실)']),
+                    "자산총계": get_value(['자산총계']),
+                    "부채총계": get_value(['부채총계']),
+                    "자본총계": get_value(['자본총계'])
+                }
+                return summary
+
+        except:
+            continue
+            
+    return None # 실패 시
 
 # ---------------------------------------------------------
 # [탭 1] 뉴스 모니터링
@@ -161,70 +212,88 @@ if mode == "📰 뉴스 모니터링":
                 st.link_button("기사 원문 보러가기 👉", news['link'])
 
 # ---------------------------------------------------------
-# [탭 2] 기업 공시 검색 (자동완성 기능 추가!)
+# [탭 2] 기업 공시 & 재무제표 (업그레이드 완료!)
 # ---------------------------------------------------------
-elif mode == "🏢 기업 공시 검색":
+elif mode == "🏢 기업 공시 & 재무제표":
     
-    st.subheader("🏢 DART 기업 공시 검색")
-    st.markdown("회사 이름 일부만 입력해도 다 찾아준데이! (예: **'현대'**만 쳐봐라)")
+    st.subheader("🏢 기업 분석 (공시 + 재무제표)")
+    st.markdown("회사 이름이나 종목코드를 넣으면 **재무상태**까지 털어드림!")
     
-    # 1. DART 시스템 연결 (최초 1회만 로딩)
     dart = get_dart_system()
     
     if dart is None:
         st.error("DART 연결 실패! API 키 확인해라.")
     else:
-        # 2. 회사 검색창 (검색어 입력)
-        search_text = st.text_input("회사명 검색", placeholder="여기에 '현대' 또는 '삼성' 쳐봐라...")
+        # 검색창
+        search_text = st.text_input("회사명 또는 종목코드", placeholder="예: 현대리바트, 삼성전자, 079430")
         
-        target_corp = None # 최종 선택된 회사 이름
+        final_corp_name = None 
         
-        # 3. 자동완성 로직
+        # 1. 입력값 분석
         if search_text:
-            # 전체 회사 목록에서 검색어가 포함된 놈들만 필터링
-            # dart.corp_codes에는 대한민국 모든 기업 리스트가 들어있다.
-            corp_list = dart.corp_codes
-            
-            # 검색어가 이름에 포함된 회사 찾기 (contain)
-            candidates = corp_list[corp_list['corp_name'].str.contains(search_text)]
-            
-            if candidates.empty:
-                st.warning(f"'{search_text}'(으)로 검색된 회사가 없다. 다시 쳐봐라.")
+            if search_text.isdigit() and len(search_text) >= 6:
+                final_corp_name = search_text 
+                st.info(f"🔢 종목코드 **'{search_text}'**로 조회한다!")
             else:
-                # 검색된 회사 리스트를 선택 상자(Selectbox)에 넣기
-                # 사용자가 여기서 하나를 딱 고르면 그게 target_corp가 된다.
-                target_corp = st.selectbox(
-                    f"검색 결과 ({len(candidates)}개 찾음) - 하나 골라라", 
-                    candidates['corp_name'].tolist()
-                )
+                try:
+                    corp_list = dart.corp_codes
+                    candidates = corp_list[corp_list['corp_name'].str.contains(search_text)]
+                    
+                    if not candidates.empty:
+                        selected_from_list = st.selectbox(
+                            f"목록에서 찾음 ({len(candidates)}개)", 
+                            candidates['corp_name'].tolist()
+                        )
+                        final_corp_name = selected_from_list
+                    else:
+                        st.warning(f"목록에는 '{search_text}'가 없다.")
+                        if st.checkbox(f"✅ '{search_text}' 이름 그대로 강제 조회하기"):
+                            final_corp_name = search_text
+                except:
+                    final_corp_name = search_text
         
-        st.divider()
+        # 2. 조회 실행 (버튼)
+        if final_corp_name:
+            if st.button("🚀 분석 시작하기"):
+                
+                # --- [A] 재무제표 섹션 ---
+                st.divider()
+                st.subheader(f"💰 '{final_corp_name}' 최신 재무 요약 (단위: 억원)")
+                
+                with st.spinner("재무제표 계산기 두드리는 중..."):
+                    summary = get_financial_summary(dart, final_corp_name)
+                    
+                    if summary:
+                        # 보기 좋게 3단 컬럼으로 배치
+                        col_f1, col_f2, col_f3 = st.columns(3)
+                        with col_f1:
+                            st.metric("매출액", summary['매출액'])
+                            st.metric("자산총계", summary['자산총계'])
+                        with col_f2:
+                            st.metric("영업이익", summary['영업이익'])
+                            st.metric("부채총계", summary['부채총계'])
+                        with col_f3:
+                            st.metric("당기순이익", summary['당기순이익'])
+                            st.metric("자본총계", summary['자본총계'])
+                        st.caption(f"※ 기준: {summary['기준년도']} (연결/별도 재무제표 기준)")
+                    else:
+                        st.warning("⚠️ 재무제표 정보를 불러올 수 없다. (비상장사이거나 DART에 표준 데이터가 없음)")
 
-        # 4. 공시 조회 (회사가 선택되었을 때만 실행)
-        if target_corp:
-            # 조회 기간 선택
-            col_d1, col_d2 = st.columns([3, 1])
-            with col_d1:
-                st.info(f"📢 **'{target_corp}'** 공시를 조회한다!")
-            with col_d2:
-                dart_period = st.selectbox("조회 기간", ["최근 3개월", "최근 6개월", "최근 1년"])
-
-            # 버튼 누르면 조회 시작 (매번 로딩 방지)
-            if st.button("🚀 공시 조회하기"):
-                with st.spinner(f"'{target_corp}' 자료 긁어오는 중..."):
+                # --- [B] 공시 리스트 섹션 ---
+                st.divider()
+                st.subheader(f"📋 최근 공시 내역")
+                
+                with st.spinner("공시 서류함 뒤지는 중..."):
                     try:
                         end_date = datetime.now()
-                        if dart_period == "최근 3개월": start_date = end_date - timedelta(days=90)
-                        elif dart_period == "최근 6개월": start_date = end_date - timedelta(days=180)
-                        else: start_date = end_date - timedelta(days=365)
+                        start_date = end_date - timedelta(days=365) # 최근 1년
                         
-                        reports = dart.list(target_corp, start=start_date.strftime('%Y-%m-%d'), end=end_date.strftime('%Y-%m-%d'))
+                        reports = dart.list(final_corp_name, start=start_date.strftime('%Y-%m-%d'), end=end_date.strftime('%Y-%m-%d'))
                         
                         if reports is None or reports.empty:
-                            st.warning("기간 내에 올라온 공시가 없다. 조용한 회사네.")
+                            st.error("최근 1년치 공시가 없다.")
                         else:
-                            st.success(f"총 **{len(reports)}건** 발견!")
-                            
+                            # 5개만 먼저 보여주고, 더 보기는 스크롤
                             for index, row in reports.iterrows():
                                 title = row['report_nm']
                                 rcept_no = row['rcept_no']
@@ -239,7 +308,7 @@ elif mode == "🏢 기업 공시 검색":
                                         st.markdown(f"**[{formatted_date}] {title}**")
                                         st.caption(f"제출인: {row['flr_nm']}")
                                     with col_r2:
-                                        st.link_button("📄 원문 보기", dart_url)
+                                        st.link_button("📄 원문", dart_url)
                                     st.divider()
                     except Exception as e:
-                        st.error(f"에러 났다: {e}")
+                        st.error(f"공시 불러오다 에러 났다: {e}")
