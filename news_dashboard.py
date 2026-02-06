@@ -3,8 +3,8 @@ import feedparser
 import ssl
 import urllib.parse
 import re
-import pandas as pd # <--- [추가] 데이터 계산기
-import plotly.express as px # <--- [추가] 그래프 화가
+import pandas as pd
+import plotly.express as px
 from datetime import datetime, timedelta
 from dateutil import parser
 
@@ -29,7 +29,7 @@ st.title("📰 B2B 영업 이슈 & 뉴스 모니터링")
 st.markdown("데이터로 보는 영업 트렌드! **스마트한 영업맨의 비밀무기**")
 
 # ---------------------------------------------------------
-# 2. 사이드바 (검색 조건)
+# 2. 사이드바
 # ---------------------------------------------------------
 st.sidebar.header("🛠️ 검색 조건 설정")
 
@@ -58,7 +58,7 @@ period_option = st.sidebar.selectbox("조회 기간", ["전체 보기", "최근 
 st.sidebar.info(f"현재 **{len(keywords)}개** 키워드를 감시 중이데이!")
 
 # ---------------------------------------------------------
-# 3. 함수들 (청소 & 수집)
+# 3. 함수들
 # ---------------------------------------------------------
 def clean_html(raw_html):
     if not raw_html: return ""
@@ -95,12 +95,12 @@ def get_news(search_terms):
 if st.button("🔄 최신 뉴스 다시 불러오기"):
     st.cache_data.clear()
 
-with st.spinner('뉴스 데이터 분석 중...'):
+with st.spinner('데이터 분석 중...'):
     news_list = get_news(keywords)
 
 news_list.sort(key=lambda x: x['published'], reverse=True)
 
-# 1차 필터링 (기간)
+# 1차 필터링
 date_filtered_news = []
 if news_list:
     now = datetime.now(news_list[0]['published'].tzinfo) 
@@ -118,35 +118,60 @@ else:
     st.divider()
     
     # ==========================================
-    # [여기!] 차트 기능 추가됨
+    # [디자인 업그레이드] 세련된 차트 배치
     # ==========================================
-    st.subheader("📊 키워드별 이슈 점유율")
+    st.subheader("📊 키워드 트렌드 대시보드")
     
-    # 리스트를 데이터프레임(표)으로 변환
     df = pd.DataFrame(date_filtered_news)
     
     if not df.empty:
-        # 키워드별로 몇 개인지 세기
         keyword_counts = df['keyword'].value_counts().reset_index()
         keyword_counts.columns = ['키워드', '뉴스 개수']
         
-        # 그래프 그리기 (막대 그래프)
-        fig = px.bar(
-            keyword_counts, 
-            x='키워드', 
-            y='뉴스 개수', 
-            color='키워드', # 색깔 다르게
-            text='뉴스 개수', # 막대 위에 숫자 표시
-            title=f"[{period_option}] 어떤 키워드가 뉴스에 많이 떴노?"
-        )
-        st.plotly_chart(fig, use_container_width=True)
+        # 화면을 2:1 비율로 나눈다 (왼쪽이 넓게)
+        chart_col1, chart_col2 = st.columns([2, 1])
+        
+        # 1. 왼쪽: 가로 막대 차트 (깔끔하게)
+        with chart_col1:
+            fig_bar = px.bar(
+                keyword_counts, 
+                x='뉴스 개수', 
+                y='키워드', 
+                orientation='h', # 가로로 눕히기
+                text='뉴스 개수', 
+                color='뉴스 개수', # 개수에 따라 색 농도 조절
+                color_continuous_scale='Teal', # 세련된 청록색 계열
+                title="🔥 키워드별 뉴스 발생량 (Top 이슈)"
+            )
+            # 불필요한 배경/테두리 제거 (심플함의 극치)
+            fig_bar.update_layout(
+                plot_bgcolor='rgba(0,0,0,0)', 
+                xaxis_title="", 
+                yaxis_title="",
+                height=350 # 높이 조절
+            )
+            st.plotly_chart(fig_bar, use_container_width=True)
+            
+        # 2. 오른쪽: 도넛 차트 (세련되게)
+        with chart_col2:
+            fig_pie = px.pie(
+                keyword_counts, 
+                values='뉴스 개수', 
+                names='키워드',
+                hole=0.4, # 가운데 구멍 뚫어서 도넛 모양
+                color_discrete_sequence=px.colors.qualitative.Pastel, # 파스텔톤
+                title="📈 점유율 분석"
+            )
+            fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+            fig_pie.update_layout(showlegend=False, height=350) # 범례 숨기고 심플하게
+            st.plotly_chart(fig_pie, use_container_width=True)
 
     # ==========================================
     
     st.divider()
     
-    # 검색 & 필터 UI
-    st.subheader(f"🔎 상세 뉴스 리스트 (총 {len(date_filtered_news)}건)")
+    # 리스트 필터링
+    st.subheader(f"🔎 뉴스 상세 검색 (총 {len(date_filtered_news)}건)")
     col_filter1, col_filter2 = st.columns([1, 2])
     
     with col_filter1:
@@ -160,7 +185,6 @@ else:
             default=found_keywords
         )
     
-    # 2차 필터링
     final_news = []
     for news in date_filtered_news:
         if news['keyword'] not in selected_keywords: continue
@@ -169,7 +193,6 @@ else:
     
     st.success(f"필터 적용 후: **{len(final_news)}개** 뉴스 표시 중")
     
-    # 뉴스 카드 출력
     for news in final_news:
         short_date = news['published'].strftime("%m/%d")
         full_date = news['published'].strftime("%Y-%m-%d %H:%M")
