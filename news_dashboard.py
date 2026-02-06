@@ -2,7 +2,7 @@ import streamlit as st
 import feedparser
 import ssl
 import urllib.parse
-import re # <--- [추가] HTML 태그 지우는 청소 도구
+import re
 from datetime import datetime, timedelta
 from dateutil import parser
 
@@ -13,7 +13,7 @@ if hasattr(ssl, '_create_unverified_context'):
     ssl._create_default_https_context = ssl._create_unverified_context
 
 # ---------------------------------------------------------
-# 2. 페이지 설정
+# 2. 페이지 설정 & 로고
 # ---------------------------------------------------------
 st.set_page_config(
     page_title="영업용 뉴스 수집기",
@@ -21,7 +21,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# 사이드바 로고 (있으면 뜨고 없으면 무시)
 try:
     st.sidebar.image("logo.png", use_column_width=True)
 except:
@@ -31,21 +30,21 @@ st.title("📰 B2B 영업 이슈 & 뉴스 모니터링")
 st.markdown("버튼 하나로 키워드 자동 세팅! **스마트한 영업맨의 비밀무기**")
 
 # ---------------------------------------------------------
-# 3. 사이드바 설정
+# 3. 사이드바 (버튼 & 검색설정)
 # ---------------------------------------------------------
 st.sidebar.header("🛠️ 검색 조건 설정")
 
-# --- 키워드 프리셋 ---
-preset_hotel = "호텔 리모델링, 신규 호텔 오픈, 리조트 착공, 5성급 호텔 리뉴얼, 호텔 FF&E, 생활숙박시설, 호텔 매각, 해외 리조트"
-preset_office = "사옥 이전, 통합 사옥 건립, 스마트 오피스, 기업 연수원 건립, 리모델링, 공유 오피스 출점, 오피스 인테리어, 데이터센터"
-preset_market = "건자재 가격, 친환경 자재, 모듈러 주택, LX하우시스, 현대건설 수주, DL건설 수주, 디엘이앤씨 수주, DL이앤씨 수주, 현대엔지니어링 수주"
+# --- 프리셋 정의 ---
+preset_hotel = "호텔 리모델링, 신규 호텔 오픈, 리조트 착공, 5성급 호텔 리뉴얼, 호텔 FF&E, 생활숙박시설 분양, 호텔 매각"
+preset_office = "사옥 이전, 통합 사옥 건립, 스마트 오피스, 기업 연수원 건립, 공공청사 리모델링, 공유 오피스 출점, 오피스 인테리어"
+preset_market = "건자재 가격, 친환경 자재, 모듈러 주택, 아파트 특판 가구, 한샘 B2B, LX하우시스, 현대건설 수주, GS건설 수주"
 preset_all = f"{preset_hotel}, {preset_office}, {preset_market}"
 
 # --- 세션 상태 초기화 ---
 if 'search_keywords' not in st.session_state:
     st.session_state['search_keywords'] = preset_hotel
 
-# --- 바로가기 버튼들 ---
+# --- 빠른 버튼 ---
 st.sidebar.subheader("⚡ 키워드 자동 완성")
 col1, col2 = st.sidebar.columns(2)
 
@@ -67,10 +66,9 @@ user_input = st.sidebar.text_area(
     key='search_keywords', 
     height=150
 )
-
 keywords = [k.strip() for k in user_input.split(',') if k.strip()]
 
-# --- 기간 필터링 ---
+# --- 기간 필터 ---
 period_option = st.sidebar.selectbox(
     "조회 기간",
     ["전체 보기", "최근 24시간", "최근 3일", "최근 1주일", "최근 1개월"]
@@ -79,16 +77,16 @@ period_option = st.sidebar.selectbox(
 st.sidebar.info(f"현재 **{len(keywords)}개** 키워드를 감시 중이데이!")
 
 # ---------------------------------------------------------
-# [기능 추가] HTML 태그 청소 함수 (지저분한거 닦아내기)
+# [청소 함수] HTML 태그 제거
 # ---------------------------------------------------------
 def clean_html(raw_html):
-    # <...> 처럼 생긴 태그들을 찾아서 없애버린다
+    if not raw_html: return ""
     cleanr = re.compile('<.*?>')
     cleantext = re.sub(cleanr, '', raw_html)
-    return cleantext
+    return cleantext[:150] + "..." 
 
 # ---------------------------------------------------------
-# 4. 뉴스 가져오기 함수
+# 4. 뉴스 수집 함수
 # ---------------------------------------------------------
 @st.cache_data(ttl=600)
 def get_news(search_terms):
@@ -106,7 +104,6 @@ def get_news(search_terms):
             except:
                 pub_date = datetime.now()
 
-            # [수정] 요약문(description) 가져와서 청소하기
             raw_summary = entry.get('description', '')
             clean_summary = clean_html(raw_summary)
 
@@ -115,25 +112,25 @@ def get_news(search_terms):
                 'title': entry.title,
                 'link': entry.link,
                 'published': pub_date,
-                'summary': clean_summary, # <--- 청소된 요약문 저장
+                'summary': clean_summary,
                 'source': entry.get('source', {}).get('title', 'Google News')
             })
             
     return all_news
 
 # ---------------------------------------------------------
-# 5. 메인 로직 실행
+# 5. 메인 실행 로직
 # ---------------------------------------------------------
 if st.button("🔄 최신 뉴스 다시 불러오기"):
     st.cache_data.clear()
 
-with st.spinner('뉴스 긁어오는 중... 잠만 기다리바라...'):
+with st.spinner('빠르게 긁어오는 중...'):
     news_list = get_news(keywords)
 
 # 날짜순 정렬
 news_list.sort(key=lambda x: x['published'], reverse=True)
 
-# 1차 필터링: 날짜
+# 1차 필터링: 기간
 date_filtered_news = []
 if news_list:
     now = datetime.now(news_list[0]['published'].tzinfo) 
@@ -151,14 +148,14 @@ if news_list:
             
         date_filtered_news.append(news)
 
-# 결과 출력 UI
+# 결과 화면
 if not date_filtered_news:
     st.warning("조건에 맞는 뉴스가 없다! 기간을 좀 늘려보래이.")
 else:
     st.divider()
     
-    # 필터링 UI
-    st.subheader(f"🔎 검색된 뉴스 총 {len(date_filtered_news)}건 분석")
+    # 상단 검색바 & 태그 필터
+    st.subheader(f"🔎 검색된 뉴스 총 {len(date_filtered_news)}건")
     col_filter1, col_filter2 = st.columns([1, 2])
     
     with col_filter1:
@@ -167,7 +164,7 @@ else:
     found_keywords = list(set([n['keyword'] for n in date_filtered_news]))
     with col_filter2:
         selected_keywords = st.multiselect(
-            "보고 싶은 키워드만 선택 (기본: 전체 선택)",
+            "보고 싶은 키워드만 선택",
             options=found_keywords,
             default=found_keywords
         )
@@ -181,20 +178,22 @@ else:
     
     st.success(f"필터 적용 후: **{len(final_news)}개** 뉴스 표시 중")
     
-    # 뉴스 카드 출력 (여기가 바뀜!)
+    # [수정된 부분] 뉴스 카드 출력 (제목에 날짜 추가!)
     for news in final_news:
-        date_str = news['published'].strftime("%Y-%m-%d %H:%M")
+        # 제목용 짧은 날짜 (예: 02/06)
+        short_date = news['published'].strftime("%m/%d")
+        # 내용용 긴 날짜 (예: 2024-02-06 14:00)
+        full_date = news['published'].strftime("%Y-%m-%d %H:%M")
         
-        with st.expander(f"[{news['keyword']}] {news['title']}"):
-            # [추가] 여기에 미리보기 내용을 보여준다!
-            if news['summary']:
-                st.caption("📝 미리보기:") 
-                st.info(news['summary']) # 파란색 박스 안에 요약문 넣기
+        # expander 제목에 short_date를 맨 앞에 붙였다!
+        with st.expander(f"({short_date}) [{news['keyword']}] {news['title']}"):
             
-            st.write(f"**출처:** {news['source']} | **일시:** {date_str}")
+            if news['summary']:
+                st.caption("📝 미리보기:")
+                st.info(news['summary'])
+            
+            st.write(f"**출처:** {news['source']} | **일시:** {full_date}")
             st.link_button("기사 원문 보러가기 👉", news['link'])
 
     if len(final_news) == 0:
-        st.info("필터링 조건에 맞는 기사가 없다.")
-
-
+        st.info("조건에 맞는 기사가 없다.")
