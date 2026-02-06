@@ -39,6 +39,11 @@ st.markdown("""
             white-space: normal !important; 
         }
         
+        /* 한줄평 박스 스타일링 */
+        .reportview-container .markdown-text-container {
+            font-family: 'Pretendard', sans-serif;
+        }
+        
         a { text-decoration: none; color: #0068c9; font-weight: bold; }
         a:hover { text-decoration: underline; }
     </style>
@@ -109,7 +114,7 @@ def get_dart_system():
     except Exception as e:
         return None
 
-# [핵심] 재무제표 분석: 현금흐름 제거 -> 이익잉여금(Retained Earnings) 추가
+# [핵심] 재무제표 분석: 3단 콤보 분석 (실적/재무/전략)
 def get_financial_summary_advanced(dart, corp_name):
     years = [2025, 2024]
     codes = [('11011','사업보고서'), ('11014','3분기'), ('11012','반기'), ('11013','1분기')]
@@ -153,8 +158,8 @@ def get_financial_summary_advanced(dart, corp_name):
                 
                 curr_assets_val, _, _, _ = gv(['유동자산'])
                 curr_liab_val, _, _, _ = gv(['유동부채'])
-
-                # [변경] 현금흐름 대신 '이익잉여금' (비상금) 조회 -> 성공률 100%
+                
+                # 이익잉여금
                 ret_earn_val, _, _, ret_earn_str = gv(['이익잉여금', '미처분이익잉여금', '미처리결손금'])
 
                 # 비율 계산
@@ -166,36 +171,44 @@ def get_financial_summary_advanced(dart, corp_name):
                 rev_growth = float(sd.replace('%', '')) if sd else 0
                 on_display = f"{on_str} ({opm:.1f}%)"
 
-                # 5. AI 한줄평 로직 (이익잉여금 반영)
-                comments = []
+                # ------------------------------------------------
+                # [NEW] 3단계 심층 분석 로직
+                # ------------------------------------------------
+                analysis_lines = []
                 
-                # (1) 성장성 & 수익성
-                if rev_growth > 5 and opm > 5:
-                    comments.append(f"🚀 매출도 {rev_growth}% 뛰고 장사도 알짜배기(이익률 {opm:.1f}%)네!")
-                elif rev_growth > 5 and opm < 2:
-                    comments.append("📈 덩치는 커지는데 남는 게 별로 없다(이익률 낮음). 실속 챙기야 된다.")
-                elif rev_growth < 0 and opm > 5:
-                    comments.append("📉 매출은 줄었지만 그래도 이익률은 방어 잘했다.")
-                elif rev_growth < 0 and on_val < 0:
-                    comments.append("비상이다! 🚨 매출도 줄고 적자까지 났다.")
+                # 1. [실적 진단]
+                if rev_growth < -5 or opm < 2:
+                    perf_msg = f"📉 **[실적]** 요새 경기가 얼어붙어가 매출({sd if sd else '0%'})이랑 이익이 쪼그라들었네. 불경기 직격탄 맞았다."
+                elif rev_growth > 5 and opm > 5:
+                    perf_msg = f"🚀 **[실적]** 매출도 {sd} 뛰고 이익률도 {opm:.1f}%나 찍었다. 장사 억수로 잘했네!"
+                elif rev_growth > 0:
+                    perf_msg = f"📊 **[실적]** 매출은 쪼매 늘었는데({sd}), 시장 상황 대비 선방했다."
                 else:
-                    comments.append(f"매출 흐름은 {rev_growth}% 정도고,")
+                    perf_msg = f"📉 **[실적]** 매출이 {sd} 빠져서 성장이 정체됐네."
+                analysis_lines.append(perf_msg)
 
-                # (2) 안정성 & 비상금 (잉여금)
-                if ret_earn_val and ret_earn_val > 0:
-                     if curr_ratio >= 100: comments.append(f"곳간(잉여금)에 돈도 {ret_earn_str} 쌓아놨고 재무도 튼튼하다.")
-                     else: comments.append(f"곳간(잉여금)은 있는데 당장 융통할 돈(유동비율)은 좀 챙기야겠네.")
+                # 2. [재무 진단] (기초체력)
+                if debt_ratio < 100 and ret_earn_val and ret_earn_val > 0:
+                    health_msg = f"💰 **[재무]** 근데 걱정 마라. 빚(부채비율 {debt_ratio:.0f}%)도 거의 없고, 곳간(잉여금 {ret_earn_str})이 꽉 차가 **기초체력은 국대급**이다."
+                elif debt_ratio > 200:
+                    health_msg = f"⚠️ **[재무]** 근데 빚이 좀 많다(부채비율 {debt_ratio:.0f}%). 재무구조가 불안하니 조심해야 된데이."
                 else:
-                    # 잉여금이 없거나 마이너스(결손금)인 경우
-                    comments.append("❗ **주의:** 벌어둔 돈 다 까먹고(결손금) 있다. 회사 사정이 어렵다.")
-                
-                # (3) 부채 경고
-                if debt_ratio > 250:
-                    comments.append(f"빚이 억수로 많다(부채비율 {debt_ratio:.0f}%). 조심해라.")
+                    health_msg = f"💰 **[재무]** 부채비율 {debt_ratio:.0f}% 수준으로 재무 상태는 무난~하다."
+                analysis_lines.append(health_msg)
 
-                one_line_summary = " ".join(comments)
-                
-                if not one_line_summary: one_line_summary = "특이사항은 딱히 안 보이네. 무난하다."
+                # 3. [영업 전략] (결론)
+                if (rev_growth < 0 or opm < 2) and (debt_ratio < 100):
+                    strat_msg = "🚀 **[전략]** 당장 실적은 아쉬워도 맷집 좋은 우량 고객이다. **망할 걱정 말고 길게 보고 거래 터라!**"
+                elif debt_ratio > 200:
+                    strat_msg = "🛑 **[전략]** 실속도 없고 빚도 많다. **외상 거래는 절대 금물!** 무조건 선결제 받아라."
+                elif rev_growth > 5 and opm > 5:
+                    strat_msg = "🔥 **[전략]** 지금 물 들어왔다! **적극적으로 영업해서 물량 늘려라!**"
+                else:
+                    strat_msg = "✅ **[전략]** 크게 무리 없는 회사다. 꾸준히 관계 유지하모 되겠다."
+                analysis_lines.append(strat_msg)
+
+                # 리스트를 줄바꿈으로 합침
+                full_analysis = "\n\n".join(analysis_lines)
 
                 rn = ""
                 try:
@@ -212,9 +225,9 @@ def get_financial_summary_advanced(dart, corp_name):
                     "순익": (nn_str, nd, "{:,} 억".format(int(np_val/100000000)) if np_val else "-"),
                     "자산": assets_str,
                     "부채비율": f"{debt_ratio:.1f}%",
-                    "이익잉여금": ret_earn_str, # 현금흐름 대신 들어감
+                    "이익잉여금": ret_earn_str,
                     "유동비율": f"{curr_ratio:.1f}%",
-                    "한줄평": one_line_summary,
+                    "분석내용": full_analysis, # 한줄평 -> 분석내용으로 변경
                     "link": rn
                 }
             except: continue
@@ -383,8 +396,8 @@ elif mode == "🏢 기업 공시 & 재무제표":
             if sm:
                 st.markdown(f"**📌 {sm['title']}** (전년 대비)")
                 
-                # AI 한줄평 (태그 오류 수정 완료)
-                st.success(f"💬 **[AI 영업맨 한줄평]** {sm['한줄평']}", icon="📢")
+                # [NEW] 3줄 심층 분석 출력 (st.info로 깔끔하게)
+                st.info(f"💡 **[AI 영업맨 심층 분석]**\n\n{sm['분석내용']}")
                 
                 c1,c2,c3 = st.columns(3)
                 c1.metric("매출(누적)", sm['매출'][0], sm['매출'][1]); c1.caption(f"작년: {sm['매출'][2]}")
@@ -393,7 +406,6 @@ elif mode == "🏢 기업 공시 & 재무제표":
                 
                 st.markdown("---")
                 
-                # [NEW] 이익잉여금(비상금)으로 교체 완료
                 k1, k2, k3 = st.columns(3)
                 k1.metric("이익잉여금 (비상금)", sm['이익잉여금'], help="회사가 쌓아둔 현금성 자본 (많을수록 안전)")
                 k2.metric("유동비율 (지급능력)", sm['유동비율'], help="100% 이상이면 단기 부채 상환 능력 양호")
