@@ -8,11 +8,12 @@ import plotly.express as px
 import plotly.graph_objects as go
 import OpenDartReader
 import FinanceDataReader as fdr
+from PublicDataReader import Kosis 
 from datetime import datetime, timedelta
 from dateutil import parser
 
 # ---------------------------------------------------------
-# 1. 설정 & 스타일 (버튼 디자인 수정됨!)
+# 1. 설정 & 스타일
 # ---------------------------------------------------------
 if hasattr(ssl, '_create_unverified_context'):
     ssl._create_default_https_context = ssl._create_unverified_context
@@ -23,44 +24,39 @@ st.set_page_config(
     layout="wide"
 )
 
-# [디자인 수정] 버튼 글자 크기 줄이고, 높이 제한 풀어서 글자 안 잘리게 함
 st.markdown("""
     <style>
         .block-container { padding-top: 3rem; } 
         div[data-testid="column"] { padding: 0 !important; } 
         hr { margin: 0.3rem 0 !important; } 
-        
-        /* 버튼 스타일 수정: 높이 자동(auto), 글자 크기 축소, 줄바꿈 허용 */
         .stButton button { 
             height: auto !important; 
             min-height: 2.5rem;
             padding-top: 5px !important; 
             padding-bottom: 5px !important; 
-            font-size: 0.85rem !important; /* 글자 크기 약간 줄임 */
-            white-space: normal !important; /* 글자 길면 자연스럽게 줄바꿈 */
+            font-size: 0.85rem !important; 
+            white-space: normal !important; 
         }
-        
         a { text-decoration: none; color: #0068c9; font-weight: bold; }
         a:hover { text-decoration: underline; }
     </style>
 """, unsafe_allow_html=True)
 
-# [중요] 니 API 키
+# [중요] API 키 설정
 DART_API_KEY = "3522c934d5547db5cba3f51f8d832e1a82ebce55"
+KOSIS_API_KEY = "ZDIxY2M0NTFmZThmNTZmNWZkOGYwYzYyNTMxMGIyNjg="
 
 # ---------------------------------------------------------
-# 2. 사이드바 (갱신 버튼 삭제됨!)
+# 2. 사이드바
 # ---------------------------------------------------------
 try: st.sidebar.image("logo.png", use_column_width=True)
 except: pass
 
 st.sidebar.header("🛠️ 설정")
-mode = st.sidebar.radio("모드 선택", ["📰 뉴스 모니터링", "🏢 기업 공시 & 재무제표"])
-
-# [삭제됨] 회사 목록 강제 갱신 버튼 빠짐
+mode = st.sidebar.radio("모드 선택", ["📰 뉴스 모니터링", "🏢 기업 공시 & 재무제표", "🏗️ 건설/부동산 통계"])
 
 # ---------------------------------------------------------
-# 3. 공통 함수
+# 3. 공통 함수들
 # ---------------------------------------------------------
 def clean_html(raw_html):
     if not raw_html: return ""
@@ -146,14 +142,16 @@ def get_stock_chart(target, code):
     except: return None
 
 # ---------------------------------------------------------
-# [탭 1] 뉴스
+# [탭 1] 뉴스 모니터링
 # ---------------------------------------------------------
 if mode == "📰 뉴스 모니터링":
     st.title("💼 B2B 영업 인텔리전스")
+    # [복구] 귀여운 멘트 부활!
+    st.markdown("뉴스, 공시, 재무, 그리고 **주가 흐름**까지! **스마트한 영업맨의 비밀무기**")
     
     preset_hotel = "호텔 리모델링, 신규 호텔 오픈, 리조트 착공, 5성급 호텔 리뉴얼, 호텔 FF&E, 생활숙박시설 분양, 호텔 매각, 샌즈"
-    preset_office = "사옥 이전, 통합 사옥 건립, 스마트 오피스, 기업 연수원 건립, 공공청사 리모델링, 공유 오피스 출점, 오피스 인테리어, 데이터센터"
     preset_market = "건자재 가격, 친환경 자재, 모듈러 주택, 현대건설 수주, GS건설 수주, 디엘건설, 디엘이앤씨, 현대엔지니어링"
+    preset_office = "사옥 이전, 통합 사옥 건립, 스마트 오피스, 기업 연수원 건립, 공공청사 리모델링, 공유 오피스 출점, 오피스 인테리어, 데이터센터"
     
     preset_trend = (
         "건설산업연구원 전망, 대한건설협회 수주, 건축 착공 면적, 건설 수주액, 인테리어 시장 전망, "
@@ -183,7 +181,6 @@ if mode == "📰 뉴스 모니터링":
     user_input = st.sidebar.text_area("검색 키워드", key='search_keywords', height=100)
     keywords = [k.strip() for k in user_input.split(',') if k.strip()]
     
-    # [수정] '최근 3개월' 추가됨
     period = st.sidebar.selectbox("기간", ["전체 보기", "최근 24시간", "최근 3일", "최근 1주일", "최근 1개월", "최근 3개월"])
     
     if st.button("🔄 뉴스 새로고침"): st.cache_data.clear()
@@ -200,7 +197,7 @@ if mode == "📰 뉴스 모니터링":
         if period == "최근 3일" and diff > timedelta(days=3): continue
         if period == "최근 1주일" and diff > timedelta(days=7): continue
         if period == "최근 1개월" and diff > timedelta(days=30): continue
-        if period == "최근 3개월" and diff > timedelta(days=90): continue # 로직 추가
+        if period == "최근 3개월" and diff > timedelta(days=90): continue
         final.append(n)
 
     if not final: st.warning("뉴스 없음")
@@ -229,7 +226,7 @@ if mode == "📰 뉴스 모니터링":
 # ---------------------------------------------------------
 elif mode == "🏢 기업 공시 & 재무제표":
     st.title("🏢 기업 분석 (상장사 + 신탁사)")
-    st.info("💡 **팁:** '한국토지신탁', '한국자산신탁' 검색해서 **'신탁계약'** 공시를 봐라. 그게 진짜 수주다!")
+    # [삭제] 여기에 있던 신탁사 검색 팁(st.info) 제거함!
     
     dart = get_dart_system()
     if dart is None: st.error("API 연결 실패")
@@ -295,6 +292,7 @@ elif mode == "🏢 기업 공시 & 재무제표":
                         if fq: rpts = rpts[rpts['report_nm'].str.contains(fq)]
                         st.success(f"{len(rpts)}건 발견")
                         
+                        # [유지] 검색 결과 내 팁은 살려둠 (이건 유용하니까)
                         if "신탁" in dn or "자산" in dn:
                             st.info("💡 **Tip:** 신탁사는 **'신탁계약'**이나 **'공사도급계약'**을 검색하면 현장 정보가 나온데이!")
 
@@ -307,3 +305,67 @@ elif mode == "🏢 기업 공시 & 재무제표":
                             c2.markdown(f"[{r['report_nm']}]({lk}) <span style='color:grey; font-size:0.8em'>({r['flr_nm']})</span>", unsafe_allow_html=True)
                             st.markdown("<hr style='margin: 3px 0; border-top: 1px solid #eee;'>", unsafe_allow_html=True)
                 except: st.error("공시 로딩 실패")
+
+# ---------------------------------------------------------
+# [탭 3] 건설/부동산 통계
+# ---------------------------------------------------------
+elif mode == "🏗️ 건설/부동산 통계":
+    st.title("🏗️ 건설 & 부동산 시장 통계")
+    st.markdown("통계청(KOSIS) 데이터를 실시간으로 가져온데이. **영업의 미래는 숫자에 있다!**")
+    
+    kosis_key = st.text_input("🔑 KOSIS API Key", value=KOSIS_API_KEY, type="password", help="코드를 수정하면 기본값을 바꿀 수 있다.")
+    
+    if not kosis_key:
+        st.warning("⚠️ API 키가 없으면 작동 안 한데이.")
+    else:
+        stat_type = st.radio("보고 싶은 통계 선택", ["📉 미분양주택현황 (위험신호)", "🏗️ 건축허가면적 (선행지표)"], horizontal=True)
+        
+        if st.button("📊 데이터 가져오기"):
+            try:
+                api = Kosis(kosis_key)
+                
+                if "미분양" in stat_type:
+                    st.subheader("📉 지역별 미분양 주택 현황")
+                    with st.spinner("통계청 서버 털어오는 중..."):
+                        df = api.get_data("KOSIS통합검색", searchNm="미분양주택현황")
+                        
+                        if df is not None and not df.empty:
+                            st.success(f"데이터 가져왔다! (기준: {df['PRD_DE'].max()})")
+                            
+                            target_df = df[df['PRD_DE'] == df['PRD_DE'].max()] 
+                            target_df['DT'] = pd.to_numeric(target_df['DT'], errors='coerce') 
+                            
+                            chart_df = target_df[~target_df['C1_NM'].str.contains("전국|수도권|지방")]
+                            chart_df = chart_df.sort_values(by='DT', ascending=False).head(15) 
+                            
+                            fig = px.bar(chart_df, x='C1_NM', y='DT', text='DT', title=f"지역별 미분양 TOP 15 ({target_df['PRD_DE'].iloc[0]})", color='DT', color_continuous_scale='Reds')
+                            st.plotly_chart(fig, use_container_width=True)
+                            
+                            with st.expander("📄 전체 데이터 보기"):
+                                st.dataframe(df)
+                        else:
+                            st.error("데이터가 비어있다. API 키가 맞나 확인해봐라.")
+
+                elif "건축허가" in stat_type:
+                    st.subheader("🏗️ 건축허가면적 (향후 일감)")
+                    with st.spinner("통계청 서버 털어오는 중..."):
+                        df = api.get_data("KOSIS통합검색", searchNm="건축허가현황")
+                        
+                        if df is not None and not df.empty:
+                            st.success(f"데이터 가져왔다! (기준: {df['PRD_DE'].max()})")
+                            
+                            ts_df = df[df['C1_NM'] == '전국']
+                            ts_df['DT'] = pd.to_numeric(ts_df['DT'], errors='coerce')
+                            ts_df = ts_df.sort_values('PRD_DE')
+                            
+                            fig = px.line(ts_df, x='PRD_DE', y='DT', markers=True, title="전국 건축허가면적 추이", labels={'DT':'면적(㎡)'})
+                            st.plotly_chart(fig, use_container_width=True)
+                            
+                            with st.expander("📄 전체 데이터 보기"):
+                                st.dataframe(df)
+                        else:
+                            st.error("데이터 못 가져왔다.")
+
+            except Exception as e:
+                st.error(f"에러 났다: {e}")
+                st.info("혹시 API 키가 틀렸거나, 트래픽 초과일 수도 있다.")
