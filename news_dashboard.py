@@ -46,12 +46,10 @@ except: pass
 st.sidebar.header("🛠️ 설정")
 mode = st.sidebar.radio("모드 선택", ["📰 뉴스 모니터링", "🏢 기업 공시 & 재무제표"])
 
-# [신규 기능] 회사 목록 강제 갱신 버튼
 st.sidebar.markdown("---")
-st.sidebar.markdown("**데이터 관리**")
 if st.sidebar.button("🔄 회사 목록 강제 갱신"):
-    st.cache_resource.clear() # 캐시 삭제
-    st.success("회사 목록을 초기화했다! 다시 검색해봐라.")
+    st.cache_resource.clear() 
+    st.success("목록 갱신 완료!")
 
 # ---------------------------------------------------------
 # 3. 공통 함수
@@ -84,8 +82,6 @@ def get_news(search_terms):
 @st.cache_resource
 def get_dart_system():
     try:
-        # OpenDartReader 객체 생성 시 회사 목록을 다운로드함
-        # 기타법인까지 모두 포함된 리스트임
         dart = OpenDartReader(DART_API_KEY) 
         return dart
     except Exception as e:
@@ -94,49 +90,38 @@ def get_dart_system():
 def get_financial_summary_advanced(dart, corp_name):
     years = [2025, 2024]
     codes = [('11011','사업보고서'), ('11014','3분기'), ('11012','반기'), ('11013','1분기')]
-    
     for year in years:
         for code, c_name in codes:
             try:
                 fs = dart.finstate(corp_name, year, reprt_code=code)
                 if fs is None or fs.empty: continue
-                
-                target_fs = fs[fs['fs_div']=='CFS']
-                if target_fs.empty: target_fs = fs[fs['fs_div']=='OFS']
-
-                def get_val(names):
-                    for nm in names:
-                        row = target_fs[target_fs['account_nm']==nm]
-                        if not row.empty:
+                t_fs = fs[fs['fs_div']=='CFS']
+                if t_fs.empty: t_fs = fs[fs['fs_div']=='OFS']
+                def gv(nms):
+                    for nm in nms:
+                        r = t_fs[t_fs['account_nm']==nm]
+                        if not r.empty:
                             try:
-                                t_str = row.iloc[0].get('thstrm_add_amount', row.iloc[0]['thstrm_amount'])
-                                if pd.isna(t_str) or t_str=='': t_str = row.iloc[0]['thstrm_amount']
-                                p_str = row.iloc[0].get('frmtrm_add_amount', row.iloc[0]['frmtrm_amount'])
-                                if pd.isna(p_str) or p_str=='': p_str = row.iloc[0]['frmtrm_amount']
-                                
-                                tv = float(str(t_str).replace(',',''))
-                                pv = 0 if (pd.isna(p_str) or p_str=='') else float(str(p_str).replace(',',''))
-                                
-                                delta = f"{((tv-pv)/pv)*100:.1f}%" if pv!=0 else None
-                                return "{:,} 억".format(int(tv/100000000)), delta, "{:,} 억".format(int(pv/100000000))
+                                ts = r.iloc[0].get('thstrm_add_amount', r.iloc[0]['thstrm_amount'])
+                                if pd.isna(ts) or ts=='': ts = r.iloc[0]['thstrm_amount']
+                                ps = r.iloc[0].get('frmtrm_add_amount', r.iloc[0]['frmtrm_amount'])
+                                if pd.isna(ps) or ps=='': ps = r.iloc[0]['frmtrm_amount']
+                                tv = float(str(ts).replace(',','')); pv = 0 if (pd.isna(ps) or ps=='') else float(str(ps).replace(',',''))
+                                dt = f"{((tv-pv)/pv)*100:.1f}%" if pv!=0 else None
+                                return "{:,} 억".format(int(tv/100000000)), dt, "{:,} 억".format(int(pv/100000000))
                             except: continue
                     return "-", None, "-"
-
-                s_n, s_d, s_p = get_val(['매출액', '수익(매출액)'])
-                if s_n == "-": continue
-                o_n, o_d, o_p = get_val(['영업이익', '영업이익(손실)'])
-                n_n, n_d, n_p = get_val(['당기순이익', '당기순이익(손실)'])
-
-                rcept_no = ""
+                sn,sd,sp = gv(['매출액', '수익(매출액)'])
+                if sn == "-": continue
+                on,od,op = gv(['영업이익', '영업이익(손실)']); nn,nd,np = gv(['당기순이익', '당기순이익(손실)'])
+                rn = ""
                 try:
                     rl = dart.list(corp_name, start=f"{year}-01-01", end=f"{year}-12-31", kind='A')
                     kw = "사업보고서" if code=='11011' else ("분기" if code=='11014' else "반기")
-                    for i, r in rl.iterrows():
-                        if kw in r['report_nm']: 
-                            rcept_no = r['rcept_no']; break
+                    for i,r in rl.iterrows():
+                        if kw in r['report_nm']: rn = r['rcept_no']; break
                 except: pass
-
-                return {"title": f"{year}년 {c_name} (누적)", "매출":(s_n,s_d,s_p), "영업":(o_n,o_d,o_p), "순익":(n_n,n_d,n_p), "link":rcept_no}
+                return {"title": f"{year}년 {c_name} (누적)", "매출":(sn,sd,sp), "영업":(on,od,op), "순익":(nn,nd,np), "link":rn}
             except: continue
     return None
 
@@ -144,13 +129,12 @@ def get_stock_chart(target, code):
     try:
         df = fdr.DataReader(code, datetime.now()-timedelta(days=365), datetime.now())
         if df.empty: return None
-        last = df['Close'].iloc[-1]; prev = df['Close'].iloc[-2]
-        chg = ((last-prev)/prev)*100
-        color = '#ff4b4b' if chg>0 else '#4b4bff'
+        l = df['Close'].iloc[-1]; p = df['Close'].iloc[-2]; c = ((l-p)/p)*100
+        clr = '#ff4b4b' if c>0 else '#4b4bff'
         fig = px.area(df, x=df.index, y='Close')
         fig.update_layout(xaxis_title="", yaxis_title="", height=300, margin=dict(t=30,b=0,l=0,r=0), showlegend=False)
-        fig.update_traces(line_color=color)
-        return fig, last, chg
+        fig.update_traces(line_color=clr)
+        return fig, l, c
     except: return None
 
 # ---------------------------------------------------------
@@ -159,20 +143,28 @@ def get_stock_chart(target, code):
 if mode == "📰 뉴스 모니터링":
     st.title("💼 B2B 영업 인텔리전스")
     
-    preset_hotel = "호텔 리모델링, 신규 호텔 오픈, 리조트 착공, 5성급 호텔 리뉴얼, 호텔 FF&E, 생활숙박시설 분양, 호텔 매각, 샌즈"
-    preset_office = "사옥 이전, 통합 사옥 건립, 스마트 오피스, 기업 연수원 건립, 공공청사 리모델링, 공유 오피스 출점, 오피스 인테리어, 데이터센터"
-    preset_market = "건자재 가격, 친환경 자재, 모듈러 주택, 현대건설 수주, GS건설 수주, 디엘건설, 디엘이앤씨, 현대엔지니어링"
-    preset_all = f"{preset_hotel}, {preset_office}, {preset_market}"
+    # [수정] 2번(건산연/트렌드) + 4번(PF/신탁) 관련 키워드 대폭 추가!
+    preset_hotel = "호텔 리모델링, 신규 호텔 오픈, 리조트 착공, 5성급 호텔 리뉴얼, 호텔 FF&E, 샌즈"
+    preset_market = "건자재 가격, 친환경 자재, 모듈러 주택, 현대건설 수주, GS건설 수주"
+    
+    # [신규] 2번 Insight: 건설 경기 동향
+    preset_trend = "건설산업연구원 전망, 대한건설협회 수주, 건축 착공 면적, 건설 수주액, 인테리어 시장 전망"
+    
+    # [신규] 4번 Insight: PF/신탁/디벨로퍼
+    preset_pf = "부동산 신탁 수주, 신탁계약 체결, 리츠 인가, PF 대출 보증, 시행사 시공사 선정, 대구 재개발 수주"
+
+    preset_all = f"{preset_hotel}, {preset_market}, {preset_trend}, {preset_pf}"
 
     if 'search_keywords' not in st.session_state: st.session_state['search_keywords'] = preset_hotel
     st.sidebar.subheader("⚡ 키워드 자동 완성")
+    
     c1, c2 = st.sidebar.columns(2)
     with c1:
         if st.button("🏨 호텔/리조트"): st.session_state['search_keywords'] = preset_hotel
-        if st.button("🏗️ 건자재/동향"): st.session_state['search_keywords'] = preset_market
+        if st.button("📈 건설경기 동향"): st.session_state['search_keywords'] = preset_trend # NEW
     with c2:
-        if st.button("🏢 오피스/사옥"): st.session_state['search_keywords'] = preset_office
-        if st.button("🔥 영업 풀세트"): st.session_state['search_keywords'] = preset_all
+        if st.button("💰 PF/신탁/개발"): st.session_state['search_keywords'] = preset_pf # NEW
+        if st.button("🔥 전체 풀세트"): st.session_state['search_keywords'] = preset_all
     
     user_input = st.sidebar.text_area("검색 키워드", key='search_keywords', height=100)
     keywords = [k.strip() for k in user_input.split(',') if k.strip()]
@@ -218,117 +210,78 @@ if mode == "📰 뉴스 모니터링":
 # [탭 2] 기업 공시 & 재무제표
 # ---------------------------------------------------------
 elif mode == "🏢 기업 공시 & 재무제표":
-    st.title("🏢 기업 분석 (상장사 + 기타법인)")
+    st.title("🏢 기업 분석 (상장사 + 신탁사)")
+    st.info("💡 **팁:** '한국토지신탁', '한국자산신탁' 검색해서 **'신탁계약'** 공시를 봐라. 그게 진짜 수주다!")
     
     dart = get_dart_system()
-    if dart is None: st.error("API 연결 실패. 키 확인 필요")
+    if dart is None: st.error("API 연결 실패")
     else:
-        search_txt = st.text_input("회사명 또는 종목코드", placeholder="예: 쿠팡, 야놀자, 현대건설")
-        final_corp = None
-        stock_code = None
+        search_txt = st.text_input("회사명 또는 종목코드", placeholder="예: 한국토지신탁, 034830")
+        final_corp = None; stock_code = None
 
         if search_txt:
-            # 1. 종목코드로 검색
             if search_txt.isdigit() and len(search_txt) >= 6:
-                final_corp = search_txt
-                stock_code = search_txt
-                st.info(f"🔢 코드검색: {search_txt}")
+                final_corp = search_txt; stock_code = search_txt
             else:
                 try:
-                    # 2. 이름으로 검색 (기타법인 포함 전체 리스트 탐색)
-                    # 공백 제거 후 검색하는 로직 추가 (사용자가 '현대 건설'로 쳐도 찾게)
-                    corp_df = dart.corp_codes
-                    
-                    # 검색어 정제 (공백 제거)
-                    clean_search = search_txt.replace(" ", "")
-                    
-                    # 회사명 리스트에서 공백 제거한 것과 매칭되는지 확인 (느슨한 검색)
-                    # 'corp_name' 컬럼을 문자열로 변환 후 검색
-                    mask = corp_df['corp_name'].astype(str).str.replace(" ", "").str.contains(clean_search)
-                    candidates = corp_df[mask]
-
-                    if not candidates.empty:
-                        # 결과가 너무 많으면 50개만 보여줌
-                        show_list = candidates['corp_name'].tolist()[:50]
-                        sel_name = st.selectbox(f"검색 결과 ({len(candidates)}개)", show_list)
-                        
-                        # 선택된 회사의 정보 추출
-                        sel_row = candidates[candidates['corp_name'] == sel_name].iloc[0]
-                        final_corp = sel_row['corp_code'] # DART 고유코드 사용 (이게 제일 정확함)
-                        
-                        # 상장사면 주식코드 있음
-                        if not pd.isna(sel_row['stock_code']) and sel_row['stock_code'] != '':
-                            stock_code = sel_row['stock_code']
-                        
-                        st.success(f"선택됨: **{sel_name}** (고유코드: {final_corp})")
-                        
-                        # 세션에 이름 저장 (표시용)
-                        st.session_state['display_name'] = sel_name
+                    cdf = dart.corp_codes
+                    cln = search_txt.replace(" ", "")
+                    msk = cdf['corp_name'].astype(str).str.replace(" ", "").str.contains(cln)
+                    cands = cdf[msk]
+                    if not cands.empty:
+                        sl = cands['corp_name'].tolist()[:50]
+                        sn = st.selectbox(f"검색 결과 ({len(cands)}개)", sl)
+                        sr = cands[cands['corp_name'] == sn].iloc[0]
+                        final_corp = sr['corp_code']
+                        if not pd.isna(sr['stock_code']) and sr['stock_code'] != '': stock_code = sr['stock_code']
+                        st.session_state['dn'] = sn
                     else:
-                        st.warning("목록에 없다. (좌측 '회사 목록 갱신' 버튼 눌러봤나?)")
-                        if st.checkbox("강제 조회 (정확한 이름 입력 필수)"): 
-                            final_corp = search_txt
-                            st.session_state['display_name'] = search_txt
-                except: 
-                    final_corp = search_txt
-                    st.session_state['display_name'] = search_txt
+                        st.warning("목록에 없음")
+                        if st.checkbox("강제 조회"): final_corp = search_txt; st.session_state['dn'] = search_txt
+                except: final_corp = search_txt; st.session_state['dn'] = search_txt
 
         if st.button("🚀 분석 시작"):
-            st.session_state['active'] = True
-            st.session_state['corp'] = final_corp
-            st.session_state['sc'] = stock_code
+            st.session_state['act'] = True; st.session_state['cp'] = final_corp; st.session_state['sc'] = stock_code
 
-        if st.session_state.get('active'):
-            tgt = st.session_state.get('corp') # 이게 DART 코드거나 이름
-            sc = st.session_state.get('sc')
-            d_name = st.session_state.get('display_name', tgt)
-
-            if tgt != final_corp: st.warning("⚠️ 대상 변경됨. 버튼 다시 클릭!")
+        if st.session_state.get('act'):
+            tgt = st.session_state.get('cp'); sc = st.session_state.get('sc'); dn = st.session_state.get('dn', tgt)
+            if tgt != final_corp: st.warning("버튼 다시 클릭!")
             else:
-                # A. 주가
                 if sc:
-                    st.divider()
-                    st.subheader(f"📈 {d_name} 주가")
-                    res = get_stock_chart(d_name, sc)
+                    st.divider(); st.subheader(f"📈 {dn} 주가")
+                    res = get_stock_chart(dn, sc)
                     if res:
-                        fig, last, chg = res
-                        st.metric("현재가", f"{last:,}원", f"{chg:.2f}%")
-                        st.plotly_chart(fig, use_container_width=True)
-                    else: st.info("주가 정보 없음 (거래정지 혹은 데이터 부족)")
-                else:
-                    st.divider()
-                    st.info(f"💡 **{d_name}**은(는) 비상장사(기타법인)라 주가 차트가 없다.")
+                        f, l, c = res; st.metric("현재가", f"{l:,}원", f"{c:.2f}%")
+                        st.plotly_chart(f, use_container_width=True)
+                    else: st.info("주가 정보 없음")
+                else: st.divider(); st.info("비상장사라 주가 없음")
 
-                # B. 재무
-                st.divider()
-                st.subheader("💰 재무 성적표")
-                summ = get_financial_summary_advanced(dart, tgt) # tgt가 고유코드면 더 정확함
-                if summ:
-                    st.markdown(f"**📌 {summ['title']}** (전년 대비)")
+                st.divider(); st.subheader("💰 재무 성적표")
+                sm = get_financial_summary_advanced(dart, tgt)
+                if sm:
+                    st.markdown(f"**📌 {sm['title']}** (전년 대비)")
                     c1,c2,c3 = st.columns(3)
-                    c1.metric("매출(누적)", summ['매출'][0], summ['매출'][1]); c1.caption(f"작년: {summ['매출'][2]}")
-                    c2.metric("영업이익", summ['영업'][0], summ['영업'][1]); c2.caption(f"작년: {summ['영업'][2]}")
-                    c3.metric("순이익", summ['순익'][0], summ['순익'][1]); c3.caption(f"작년: {summ['순익'][2]}")
-                    if summ['link']: st.link_button("📄 원문 보고서", f"http://dart.fss.or.kr/dsaf001/main.do?rcpNo={summ['link']}")
-                else: st.warning("재무 데이터 없음 (지주사거나 연결재무제표 미작성 등)")
+                    c1.metric("매출(누적)", sm['매출'][0], sm['매출'][1]); c1.caption(f"작년: {sm['매출'][2]}")
+                    c2.metric("영업이익", sm['영업'][0], sm['영업'][1]); c2.caption(f"작년: {sm['영업'][2]}")
+                    c3.metric("순이익", sm['순익'][0], sm['순익'][1]); c3.caption(f"작년: {sm['순익'][2]}")
+                    if sm['link']: st.link_button("📄 원문 보고서", f"http://dart.fss.or.kr/dsaf001/main.do?rcpNo={sm['link']}")
+                else: st.warning("재무 데이터 없음")
 
-                # C. 공시
-                st.divider()
-                st.subheader("📋 공시 내역")
+                st.divider(); st.subheader("📋 공시 내역")
                 try:
-                    end = datetime.now(); start = end - timedelta(days=365)
-                    # tgt가 고유코드(8자리)면 이름 충돌 없이 정확하게 검색됨
-                    rpts = dart.list(tgt, start=start.strftime('%Y-%m-%d'), end=end.strftime('%Y-%m-%d'))
-                    
+                    ed = datetime.now(); stt = ed - timedelta(days=365)
+                    rpts = dart.list(tgt, start=stt.strftime('%Y-%m-%d'), end=ed.strftime('%Y-%m-%d'))
                     if rpts is None or rpts.empty: st.error("공시 없음")
                     else:
-                        fq = st.text_input("🔍 결과 내 검색", placeholder="수주, 계약...")
+                        fq = st.text_input("🔍 결과 내 검색", placeholder="신탁, 수주, 계약...")
                         if fq: rpts = rpts[rpts['report_nm'].str.contains(fq)]
-                        
                         st.success(f"{len(rpts)}건 발견")
-                        h1, h2 = st.columns([1.5, 8.5])
-                        h1.markdown("**날짜**"); h2.markdown("**제목 (제출인)**"); st.markdown("---")
                         
+                        # [팁] 공시 탭 상단에 힌트 추가
+                        if "신탁" in dn or "자산" in dn:
+                            st.info("💡 **Tip:** 신탁사는 **'신탁계약'**이나 **'공사도급계약'**을 검색하면 현장 정보가 나온데이!")
+
+                        h1, h2 = st.columns([1.5, 8.5]); h1.markdown("**날짜**"); h2.markdown("**제목 (제출인)**"); st.markdown("---")
                         for i, r in rpts.iterrows():
                             dt = r['rcept_dt']; fd = f"{dt[2:4]}/{dt[4:6]}/{dt[6:]}"
                             lk = f"http://dart.fss.or.kr/dsaf001/main.do?rcpNo={r['rcept_no']}"
