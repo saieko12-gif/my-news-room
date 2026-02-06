@@ -30,7 +30,7 @@ except:
     pass
 
 st.title("💼 B2B 영업 인텔리전스 (News & DART)")
-st.markdown("뉴스, 공시, 그리고 **최신 재무제표**까지 완벽하게! **스마트한 영업맨의 비밀무기**")
+st.markdown("뉴스, 공시, 그리고 **성장률 분석**까지! **스마트한 영업맨의 비밀무기**")
 
 # ---------------------------------------------------------
 # 2. 사이드바 (모드 선택)
@@ -76,76 +76,107 @@ def get_dart_system():
     except Exception as e:
         return None
 
-# [핵심 수정] 재무제표 샅샅이 뒤지는 함수
-def get_financial_summary(dart, corp_name):
-    # 2026년 초니까 2025년 데이터가 있으면 가져오고, 없으면 2024년 가져옴
+# [핵심] 재무제표 + 성장률 + 링크까지 다 가져오는 함수
+def get_financial_summary_advanced(dart, corp_name):
+    # 2025년부터 역순으로 검색
     years = [2025, 2024]
     
-    # 보고서 우선순위: 사업보고서(1년) -> 3분기 -> 반기 -> 1분기
-    # 11011: 1년 전체 (가장 정확)
-    # 11014: 3분기 (9월까지)
-    # 11012: 반기 (6월까지)
-    # 11013: 1분기 (3월까지)
+    # 보고서 코드 정의
     report_codes = [
-        ('11011', '1년(사업보고서)'), 
-        ('11014', '3분기 누적'), 
-        ('11012', '반기 누적'), 
-        ('11013', '1분기')
+        ('11011', '사업보고서 (1년 확정)'), 
+        ('11014', '3분기보고서 (누적)'), 
+        ('11012', '반기보고서 (누적)'), 
+        ('11013', '1분기보고서')
     ]
     
     for year in years:
         for code, code_name in report_codes:
             try:
-                # 데이터 요청
+                # 1. 재무제표 데이터 요청
                 fs = dart.finstate(corp_name, year, reprt_code=code)
                 
                 if fs is not None and not fs.empty:
-                    # 연결재무제표(CFS) 우선, 없으면 별도(OFS)
                     target_fs = fs[fs['fs_div'] == 'CFS']
                     if target_fs.empty:
                         target_fs = fs[fs['fs_div'] == 'OFS']
 
-                    # 값 추출 함수
-                    def get_value(account_names):
+                    def get_data_pair(account_names):
                         for nm in account_names:
                             row = target_fs[target_fs['account_nm'] == nm]
                             if not row.empty:
-                                val = row.iloc[0]['thstrm_amount']
-                                # 값이 없거나 비어있으면 패스
-                                if pd.isna(val) or val == '': continue
-                                
                                 try:
-                                    # 억원 단위 변환 (문자열 콤마 제거 후 계산)
-                                    amount = float(str(val).replace(',', ''))
-                                    return "{:,} 억".format(int(amount / 100000000))
-                                except:
-                                    return val
-                        return "-"
+                                    this_val_str = row.iloc[0]['thstrm_amount']
+                                    prev_val_str = row.iloc[0]['frmtrm_amount']
+                                    
+                                    this_val = float(str(this_val_str).replace(',', ''))
+                                    
+                                    if pd.isna(prev_val_str) or prev_val_str == '':
+                                        prev_val = 0
+                                    else:
+                                        prev_val = float(str(prev_val_str).replace(',', ''))
 
-                    # 데이터가 유의미한지 확인 (매출액이 '-'가 아니어야 함)
-                    sales = get_value(['매출액', '수익(매출액)'])
-                    if sales == "-": continue # 데이터는 왔는데 빈 껍데기면 다음 보고서 찾기
+                                    this_view = "{:,} 억".format(int(this_val / 100000000))
+                                    prev_view = "{:,} 억".format(int(prev_val / 100000000))
+                                    
+                                    if prev_val == 0:
+                                        delta = None
+                                    else:
+                                        delta = ((this_val - prev_val) / prev_val) * 100
+                                        delta = f"{delta:.1f}%" 
+
+                                    return this_view, delta, prev_view 
+                                except:
+                                    continue
+                        return "-", None, "-"
+
+                    sales_now, sales_delta, sales_prev = get_data_pair(['매출액', '수익(매출액)'])
+                    op_now, op_delta, op_prev = get_data_pair(['영업이익', '영업이익(손실)'])
+                    net_now, net_delta, net_prev = get_data_pair(['당기순이익', '당기순이익(손실)'])
+                    
+                    if sales_now == "-": continue 
+
+                    # 2. 보고서 원문 링크 찾기
+                    rcept_no = ""
+                    try:
+                        start_dt = f"{year}-01-01"
+                        end_dt = f"{year}-12-31" 
+                        reports = dart.list(corp_name, start=start_dt, end=end_dt, kind='A')
+                        
+                        target_name_keyword = ""
+                        if code == '11011': target_name_keyword = "사업보고서"
+                        elif code == '11014': target_name_keyword = "분기보고서"
+                        elif code == '11012': target_name_keyword = "반기보고서"
+                        
+                        for idx, row in reports.iterrows():
+                            if target_name_keyword in row['report_nm'] and str(year) in str(row['rcept_dt']): 
+                                rcept_no = row['rcept_no']
+                                break
+                            if target_name_keyword in row['report_nm']:
+                                rcept_no = row['rcept_no']
+                                break
+                    except:
+                        rcept_no = ""
 
                     summary = {
-                        "기준년도": f"{year}년 {code_name}", # 예: 2025년 3분기 누적
-                        "매출액": sales,
-                        "영업이익": get_value(['영업이익', '영업이익(손실)']),
-                        "당기순이익": get_value(['당기순이익', '당기순이익(손실)']),
-                        "자산총계": get_value(['자산총계']),
-                        "부채총계": get_value(['부채총계']),
-                        "자본총계": get_value(['자본총계'])
+                        "title": f"{year}년 {code_name} (누적 기준)",
+                        "매출": (sales_now, sales_delta, sales_prev),
+                        "영업이익": (op_now, op_delta, op_prev),
+                        "순이익": (net_now, net_delta, net_prev),
+                        "rcept_no": rcept_no 
                     }
-                    return summary # 찾았으면 바로 리턴!
+                    return summary
 
             except:
-                continue # 에러나면 다음 코드 시도
+                continue
             
-    return None # 끝까지 못 찾으면 None
+    return None
 
 # ---------------------------------------------------------
-# [탭 1] 뉴스 모니터링
+# [탭 1] 뉴스 모니터링 (여기가 업데이트 됨!)
 # ---------------------------------------------------------
 if mode == "📰 뉴스 모니터링":
+    
+    # [수정] 니가 요청한 새로운 키워드셋 적용 완료!
     preset_hotel = "호텔 리모델링, 신규 호텔 오픈, 리조트 착공, 5성급 호텔 리뉴얼, 호텔 FF&E, 생활숙박시설 분양, 호텔 매각, 샌즈"
     preset_office = "사옥 이전, 통합 사옥 건립, 스마트 오피스, 기업 연수원 건립, 공공청사 리모델링, 공유 오피스 출점, 오피스 인테리어, 데이터센터"
     preset_market = "건자재 가격, 친환경 자재, 모듈러 주택, 현대건설 수주, GS건설 수주, 디엘건설, 디엘이앤씨, 현대엔지니어링"
@@ -229,16 +260,15 @@ if mode == "📰 뉴스 모니터링":
 # ---------------------------------------------------------
 elif mode == "🏢 기업 공시 & 재무제표":
     
-    st.subheader("🏢 기업 분석 (공시 + 재무제표)")
-    st.markdown("회사 이름이나 종목코드를 넣으면 **최신 재무상태**까지 털어드림!")
+    st.subheader("🏢 기업 분석 (공시 + 재무성장률)")
+    st.markdown("전년 대비 **얼마나 성장했는지** 한눈에 보여준데이!")
     
     dart = get_dart_system()
     
     if dart is None:
         st.error("DART 연결 실패! API 키 확인해라.")
     else:
-        # 검색창
-        search_text = st.text_input("회사명 또는 종목코드", placeholder="예: 현대리바트, 삼성전자, 079430")
+        search_text = st.text_input("회사명 또는 종목코드", placeholder="예: 현대리바트, 079430")
         
         final_corp_name = None 
         
@@ -250,12 +280,8 @@ elif mode == "🏢 기업 공시 & 재무제표":
                 try:
                     corp_list = dart.corp_codes
                     candidates = corp_list[corp_list['corp_name'].str.contains(search_text)]
-                    
                     if not candidates.empty:
-                        selected_from_list = st.selectbox(
-                            f"목록에서 찾음 ({len(candidates)}개)", 
-                            candidates['corp_name'].tolist()
-                        )
+                        selected_from_list = st.selectbox(f"목록에서 찾음 ({len(candidates)}개)", candidates['corp_name'].tolist())
                         final_corp_name = selected_from_list
                     else:
                         st.warning(f"목록에는 '{search_text}'가 없다.")
@@ -267,38 +293,59 @@ elif mode == "🏢 기업 공시 & 재무제표":
         if final_corp_name:
             if st.button("🚀 분석 시작하기"):
                 
-                # --- [A] 재무제표 섹션 ---
+                # --- [A] 성장률 분석 섹션 ---
                 st.divider()
-                st.subheader(f"💰 '{final_corp_name}' 최신 재무 요약 (단위: 억원)")
+                st.subheader(f"📈 '{final_corp_name}' 재무 성적표")
                 
-                with st.spinner("최신 재무제표(3분기/반기) 뒤지는 중..."):
-                    summary = get_financial_summary(dart, final_corp_name)
+                with st.spinner("작년이랑 실적 비교하는 중..."):
+                    summary = get_financial_summary_advanced(dart, final_corp_name)
                     
                     if summary:
+                        st.markdown(f"**📌 기준: {summary['title']}** (전년 동기 대비)")
+                        
                         col_f1, col_f2, col_f3 = st.columns(3)
+                        
+                        # (현재값, 성장률%, 작년값)
+                        s_now, s_delta, s_prev = summary['매출']
+                        o_now, o_delta, o_prev = summary['영업이익']
+                        n_now, n_delta, n_prev = summary['순이익']
+                        
                         with col_f1:
-                            st.metric("매출액", summary['매출액'])
-                            st.metric("자산총계", summary['자산총계'])
+                            st.metric("매출액 (누적)", s_now, s_delta)
+                            st.caption(f"작년: {s_prev}")
                         with col_f2:
-                            st.metric("영업이익", summary['영업이익'])
-                            st.metric("부채총계", summary['부채총계'])
+                            st.metric("영업이익 (누적)", o_now, o_delta)
+                            st.caption(f"작년: {o_prev}")
                         with col_f3:
-                            st.metric("당기순이익", summary['당기순이익'])
-                            st.metric("자본총계", summary['자본총계'])
-                        # 몇 년도 몇 분기 자료인지 명시해줌
-                        st.caption(f"※ 기준: **{summary['기준년도']}** (연결/별도 재무제표 기준)")
+                            st.metric("당기순이익 (누적)", n_now, n_delta)
+                            st.caption(f"작년: {n_prev}")
+                            
+                        # 간단 분석 코멘트
+                        if s_delta and "-" not in s_delta: 
+                            growth = float(s_delta.replace('%',''))
+                            if growth > 10:
+                                st.success("🚀 와! 매출이 작년보다 10% 이상 뛰었네! 분위기 좋다.")
+                            elif growth > 0:
+                                st.info("🙂 작년보다 매출이 조금 늘었다. 선방했네.")
+                            else:
+                                st.error("📉 작년보다 매출이 줄었다. 회사 분위기 살벌하겠는데?")
+                                
+                        # 원본 보고서 링크 버튼
+                        if summary['rcept_no']:
+                            dart_link = f"http://dart.fss.or.kr/dsaf001/main.do?rcpNo={summary['rcept_no']}"
+                            st.link_button("📄 이 데이터 뽑아온 [분기보고서 원문] 보러가기", dart_link)
+                            
                     else:
-                        st.warning("⚠️ 재무제표 정보를 불러올 수 없다. (비상장사이거나 DART에 표준 데이터가 없음)")
+                        st.warning("⚠️ 재무 정보를 불러올 수 없다.")
 
-                # --- [B] 공시 리스트 섹션 ---
+                # --- [B] 공시 리스트 ---
                 st.divider()
                 st.subheader(f"📋 최근 공시 내역")
                 
                 with st.spinner("공시 서류함 뒤지는 중..."):
                     try:
                         end_date = datetime.now()
-                        start_date = end_date - timedelta(days=365) # 최근 1년
-                        
+                        start_date = end_date - timedelta(days=365)
                         reports = dart.list(final_corp_name, start=start_date.strftime('%Y-%m-%d'), end=end_date.strftime('%Y-%m-%d'))
                         
                         if reports is None or reports.empty:
@@ -307,7 +354,6 @@ elif mode == "🏢 기업 공시 & 재무제표":
                             for index, row in reports.iterrows():
                                 title = row['report_nm']
                                 rcept_no = row['rcept_no']
-                                corp_name = row['corp_name']
                                 date_str = row['rcept_dt']
                                 formatted_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
                                 dart_url = f"http://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}"
@@ -321,4 +367,4 @@ elif mode == "🏢 기업 공시 & 재무제표":
                                         st.link_button("📄 원문", dart_url)
                                     st.divider()
                     except Exception as e:
-                        st.error(f"공시 불러오다 에러 났다: {e}")
+                        st.error(f"에러: {e}")
