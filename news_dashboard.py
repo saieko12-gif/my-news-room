@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from dateutil import parser
 
 # ---------------------------------------------------------
-# 1. 설정 & 스타일
+# 1. 설정 & 스타일 (버튼 디자인 수정됨!)
 # ---------------------------------------------------------
 if hasattr(ssl, '_create_unverified_context'):
     ssl._create_default_https_context = ssl._create_unverified_context
@@ -23,12 +23,23 @@ st.set_page_config(
     layout="wide"
 )
 
+# [디자인 수정] 버튼 글자 크기 줄이고, 높이 제한 풀어서 글자 안 잘리게 함
 st.markdown("""
     <style>
         .block-container { padding-top: 3rem; } 
         div[data-testid="column"] { padding: 0 !important; } 
         hr { margin: 0.3rem 0 !important; } 
-        .stButton button { height: 2.5rem; padding-top: 0; padding-bottom: 0; } 
+        
+        /* 버튼 스타일 수정: 높이 자동(auto), 글자 크기 축소, 줄바꿈 허용 */
+        .stButton button { 
+            height: auto !important; 
+            min-height: 2.5rem;
+            padding-top: 5px !important; 
+            padding-bottom: 5px !important; 
+            font-size: 0.85rem !important; /* 글자 크기 약간 줄임 */
+            white-space: normal !important; /* 글자 길면 자연스럽게 줄바꿈 */
+        }
+        
         a { text-decoration: none; color: #0068c9; font-weight: bold; }
         a:hover { text-decoration: underline; }
     </style>
@@ -38,7 +49,7 @@ st.markdown("""
 DART_API_KEY = "3522c934d5547db5cba3f51f8d832e1a82ebce55"
 
 # ---------------------------------------------------------
-# 2. 사이드바
+# 2. 사이드바 (갱신 버튼 삭제됨!)
 # ---------------------------------------------------------
 try: st.sidebar.image("logo.png", use_column_width=True)
 except: pass
@@ -46,10 +57,7 @@ except: pass
 st.sidebar.header("🛠️ 설정")
 mode = st.sidebar.radio("모드 선택", ["📰 뉴스 모니터링", "🏢 기업 공시 & 재무제표"])
 
-st.sidebar.markdown("---")
-if st.sidebar.button("🔄 회사 목록 강제 갱신"):
-    st.cache_resource.clear() 
-    st.success("목록 갱신 완료!")
+# [삭제됨] 회사 목록 강제 갱신 버튼 빠짐
 
 # ---------------------------------------------------------
 # 3. 공통 함수
@@ -143,18 +151,15 @@ def get_stock_chart(target, code):
 if mode == "📰 뉴스 모니터링":
     st.title("💼 B2B 영업 인텔리전스")
     
-    # 1. 기존 타겟 키워드 (살려둠)
     preset_hotel = "호텔 리모델링, 신규 호텔 오픈, 리조트 착공, 5성급 호텔 리뉴얼, 호텔 FF&E, 생활숙박시설 분양, 호텔 매각, 샌즈"
     preset_office = "사옥 이전, 통합 사옥 건립, 스마트 오피스, 기업 연수원 건립, 공공청사 리모델링, 공유 오피스 출점, 오피스 인테리어, 데이터센터"
     preset_market = "건자재 가격, 친환경 자재, 모듈러 주택, 현대건설 수주, GS건설 수주, 디엘건설, 디엘이앤씨, 현대엔지니어링"
     
-    # 2. [확장] 건설경기 동향 (거시경제 + 선행지표 + 리스크) - 니가 요청한 넓은 범위!
     preset_trend = (
         "건설산업연구원 전망, 대한건설협회 수주, 건축 착공 면적, 건설 수주액, 인테리어 시장 전망, "
         "건축허가 면적, 주택 인허가 실적, 아파트 매매 거래량, 미분양 관리지역, 노후계획도시 특별법"
     )
     
-    # 3. [확장] PF/신탁/금융 (돈줄)
     preset_pf = (
         "부동산 신탁 수주, 신탁계약 체결, 리츠 인가, PF 대출 보증, 시행사 시공사 선정, 대구 재개발 수주, "
         "부동산 PF 조달, 브릿지론 본PF 전환, 그린리모델링 사업"
@@ -178,7 +183,8 @@ if mode == "📰 뉴스 모니터링":
     user_input = st.sidebar.text_area("검색 키워드", key='search_keywords', height=100)
     keywords = [k.strip() for k in user_input.split(',') if k.strip()]
     
-    period = st.sidebar.selectbox("기간", ["전체 보기", "최근 24시간", "최근 3일", "최근 1주일", "최근 1개월"])
+    # [수정] '최근 3개월' 추가됨
+    period = st.sidebar.selectbox("기간", ["전체 보기", "최근 24시간", "최근 3일", "최근 1주일", "최근 1개월", "최근 3개월"])
     
     if st.button("🔄 뉴스 새로고침"): st.cache_data.clear()
 
@@ -194,6 +200,7 @@ if mode == "📰 뉴스 모니터링":
         if period == "최근 3일" and diff > timedelta(days=3): continue
         if period == "최근 1주일" and diff > timedelta(days=7): continue
         if period == "최근 1개월" and diff > timedelta(days=30): continue
+        if period == "최근 3개월" and diff > timedelta(days=90): continue # 로직 추가
         final.append(n)
 
     if not final: st.warning("뉴스 없음")
