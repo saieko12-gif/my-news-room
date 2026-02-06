@@ -33,14 +33,18 @@ st.title("💼 B2B 영업 인텔리전스 (News & DART)")
 st.markdown("뉴스, 공시, 그리고 **누적 실적 분석**까지! **스마트한 영업맨의 비밀무기**")
 
 # ---------------------------------------------------------
-# [디자인] 여백 줄이기용 CSS 해킹 (이거 넣으면 빡빡하게 나옴)
+# [디자인] 제목 안 잘리게 여백 조정 (3rem)
 # ---------------------------------------------------------
 st.markdown("""
     <style>
-        .block-container { padding-top: 1rem; } /* 맨 위 여백 줄임 */
-        div[data-testid="column"] { padding: 0 !important; } /* 컬럼 간격 줄임 */
-        hr { margin: 0.3rem 0 !important; } /* 구분선 여백 확 줄임 */
-        .stButton button { height: 2.5rem; padding-top: 0; padding-bottom: 0; } /* 버튼 높이 줄임 */
+        .block-container { padding-top: 3rem; } 
+        div[data-testid="column"] { padding: 0 !important; } 
+        hr { margin: 0.3rem 0 !important; } 
+        .stButton button { height: 2.5rem; padding-top: 0; padding-bottom: 0; } 
+        
+        /* [추가] 링크 텍스트 예쁘게 (파란색, 밑줄 없애고 마우스 올리면 밑줄) */
+        a { text-decoration: none; color: #0068c9; font-weight: bold; }
+        a:hover { text-decoration: underline; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -111,11 +115,9 @@ def get_financial_summary_advanced(dart, corp_name):
                             row = target_fs[target_fs['account_nm'] == nm]
                             if not row.empty:
                                 try:
-                                    # 누적 우선 (thstrm_add_amount)
                                     this_val_str = row.iloc[0].get('thstrm_add_amount', row.iloc[0]['thstrm_amount'])
                                     if pd.isna(this_val_str) or this_val_str == '': this_val_str = row.iloc[0]['thstrm_amount']
                                     
-                                    # 작년 비교 (frmtrm_add_amount)
                                     prev_val_str = row.iloc[0].get('frmtrm_add_amount', row.iloc[0]['frmtrm_amount'])
                                     if pd.isna(prev_val_str) or prev_val_str == '': prev_val_str = row.iloc[0]['frmtrm_amount']
 
@@ -138,7 +140,6 @@ def get_financial_summary_advanced(dart, corp_name):
                     op_now, op_delta, op_prev = get_data_pair(['영업이익', '영업이익(손실)'])
                     net_now, net_delta, net_prev = get_data_pair(['당기순이익', '당기순이익(손실)'])
                     
-                    # 링크 찾기
                     rcept_no = ""
                     try:
                         reports = dart.list(corp_name, start=f"{year}-01-01", end=f"{year}-12-31", kind='A')
@@ -230,7 +231,7 @@ if mode == "📰 뉴스 모니터링":
                 st.link_button("원문 보기", n['link'])
 
 # ---------------------------------------------------------
-# [탭 2] 기업 공시 & 재무제표 (리스트 디자인 전면 수정!)
+# [탭 2] 기업 공시 & 재무제표 (여기가 바뀜! 텍스트 링크!)
 # ---------------------------------------------------------
 elif mode == "🏢 기업 공시 & 재무제표":
     st.subheader("🏢 기업 분석 (공시 + 재무성장률)")
@@ -278,7 +279,7 @@ elif mode == "🏢 기업 공시 & 재무제표":
                             st.link_button("📄 데이터 출처(보고서) 보기", f"http://dart.fss.or.kr/dsaf001/main.do?rcpNo={summ['rcept_no']}")
                     else: st.warning("재무 정보 없음")
 
-                # B. 공시 리스트 (여기가 확 바뀜!)
+                # B. 공시 리스트 (텍스트 링크 적용)
                 st.divider()
                 st.subheader("📋 공시 리스트")
                 
@@ -291,38 +292,32 @@ elif mode == "🏢 기업 공시 & 재무제표":
                         if reports is None or reports.empty:
                             st.error("공시 내역 없음")
                         else:
-                            # [기능 추가] 결과 내 검색창
                             filter_query = st.text_input("🔍 공시 결과 내 검색 (예: 수주, 계약, 증자...)", placeholder="찾고 싶은 단어 입력...")
                             
-                            # 필터링 적용
                             if filter_query:
                                 reports = reports[reports['report_nm'].str.contains(filter_query)]
                                 st.success(f"검색 결과: **{len(reports)}건**")
                             
-                            # [디자인 수정] 초슬림 리스트 출력
-                            # 헤더
-                            h1, h2, h3 = st.columns([1.2, 5.5, 1.3])
+                            # [레이아웃 수정] 버튼 칸 없애고, 제목 칸을 넓혔다!
+                            h1, h2 = st.columns([1.5, 8.5])
                             h1.markdown("**날짜**")
                             h2.markdown("**공시 제목 (제출인)**")
-                            h3.markdown("**링크**")
-                            st.markdown("---") # 헤더 밑줄
+                            st.markdown("---")
 
                             for idx, row in reports.iterrows():
                                 title = row['report_nm']
                                 link = f"http://dart.fss.or.kr/dsaf001/main.do?rcpNo={row['rcept_no']}"
                                 date_str = row['rcept_dt']
-                                f_date = f"{date_str[2:4]}/{date_str[4:6]}/{date_str[6:]}" # 25/02/06 형식
+                                f_date = f"{date_str[2:4]}/{date_str[4:6]}/{date_str[6:]}" 
                                 submitter = row['flr_nm']
 
-                                # 슬림한 한 줄 레이아웃
-                                c1, c2, c3 = st.columns([1.2, 5.5, 1.3])
+                                c1, c2 = st.columns([1.5, 8.5])
+                                c1.text(f_date)
                                 
-                                c1.text(f_date) # 날짜
-                                # 제목 + 제출인을 한 칸에 몰아넣기 (공간 절약)
-                                c2.markdown(f"**{title}** <span style='color:grey; font-size:0.8em'>({submitter})</span>", unsafe_allow_html=True)
-                                c3.link_button("보기", link, use_container_width=True)
+                                # [핵심] Markdown 링크 문법 사용 [제목](링크)
+                                # unsafe_allow_html=True를 써서 제출인은 회색으로 작게 처리함
+                                c2.markdown(f"[{title}]({link}) <span style='color:grey; font-size:0.8em'>({submitter})</span>", unsafe_allow_html=True)
                                 
-                                # 구분선 대신 아주 얇은 HTML 선 사용 (st.divider는 너무 뚱뚱함)
                                 st.markdown("<hr style='margin: 3px 0; border-top: 1px solid #eee;'>", unsafe_allow_html=True)
 
                     except Exception as e: st.error(f"에러: {e}")
