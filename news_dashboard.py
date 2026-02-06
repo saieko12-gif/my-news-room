@@ -5,12 +5,10 @@ import urllib.parse
 import re
 import pandas as pd
 import plotly.express as px
-# OpenDartReader는 속도를 위해 아래 함수 안으로 숨김
+# OpenDartReader는 필요할 때만 로딩
 import FinanceDataReader as fdr
-from PublicDataReader import Kosis 
 from datetime import datetime, timedelta
 from dateutil import parser
-from dateutil.relativedelta import relativedelta 
 
 # ---------------------------------------------------------
 # 1. 설정 & 스타일
@@ -31,13 +29,16 @@ st.markdown("""
         .stButton button { 
             height: auto !important; min-height: 2.5rem;
             font-size: 0.9rem !important; 
+            white-space: normal !important;
+        }
+        .link-box {
+            border: 1px solid #e0e0e0; padding: 10px; border-radius: 5px; margin-bottom: 5px;
         }
     </style>
 """, unsafe_allow_html=True)
 
-# [중요] API 키
+# [중요] API 키 (DART만 남김)
 DART_API_KEY = "3522c934d5547db5cba3f51f8d832e1a82ebce55"
-KOSIS_API_KEY = "ZDIxY2M0NTFmZThmNTZmNWZkOGYwYzYyNTMxMGIyNjg="
 
 # ---------------------------------------------------------
 # 2. 사이드바
@@ -46,10 +47,10 @@ try: st.sidebar.image("logo.png", use_column_width=True)
 except: pass
 
 st.sidebar.header("🚀 모드 선택")
-mode = st.sidebar.radio("", ["📰 뉴스 모니터링", "🏢 기업 공시 & 재무제표", "🏗️ 건설/부동산 통계"])
+mode = st.sidebar.radio("", ["📰 뉴스 모니터링", "🏢 기업 공시 & 재무제표", "🏗️ 건설/부동산 통계 (속보)"])
 
 # ---------------------------------------------------------
-# 3. 핵심 함수 (최적화)
+# 3. 함수 모음
 # ---------------------------------------------------------
 def clean_html(raw_html):
     if not raw_html: return ""
@@ -79,27 +80,6 @@ def get_dart_system():
         import OpenDartReader 
         dart = OpenDartReader(DART_API_KEY) 
         return dart
-    except: return None
-
-# [⚡초고속 로직] 받자마자 '주요 지역' 빼고 다 버림
-@st.cache_data(ttl=86400, show_spinner=False) 
-def get_kosis_fast(org_id, tbl_id):
-    try:
-        api = Kosis(KOSIS_API_KEY)
-        # 데이터 양 최소화 (최근 6개월)
-        end_date = datetime.now().strftime("%Y%m")
-        start_date = (datetime.now() - relativedelta(months=6)).strftime("%Y%m")
-        
-        df = api.get_data("KOSIS통합검색", orgId=org_id, tblId=tbl_id, startPrdDe=start_date, endPrdDe=end_date, prdSe="M")
-        
-        if df is not None:
-            # [필터링] 전국 + 광역시 + 도 (총 18개)만 남기고 싹 삭제
-            major_regions = ["전국", "서울", "부산", "대구", "인천", "광주", "대전", "울산", "세종", "경기", "강원", "충북", "충남", "전북", "전남", "경북", "경남", "제주"]
-            # 데이터에 포함된 지역명 중 major_regions에 있는 것만 필터링 (startswith로 처리하여 '서울특별시' 등도 커버)
-            mask = df['C1_NM'].apply(lambda x: any(r in x for r in major_regions))
-            df = df[mask]
-            
-        return df
     except: return None
 
 def get_stock_chart(code):
@@ -150,9 +130,12 @@ if mode == "📰 뉴스 모니터링":
     st.title("💼 B2B 영업 인텔리전스")
     
     preset_hotel = "호텔 리모델링, 신규 호텔 오픈, 리조트 착공, 5성급 호텔 리뉴얼, 호텔 FF&E, 생활숙박시설 분양, 호텔 매각, 샌즈"
-    preset_trend = "건설산업연구원 전망, 대한건설협회 수주, 건축 착공 면적, 건설 수주액, 인테리어 시장 전망, 건축허가 면적, 주택 인허가 실적, 아파트 매매 거래량, 미분양 관리지역, 노후계획도시 특별법"
-    preset_pf = "부동산 신탁 수주, 신탁계약 체결, 리츠 인가, PF 대출 보증, 시행사 시공사 선정, 대구 재개발 수주, 부동산 PF 조달, 브릿지론 본PF 전환, 그린리모델링 사업"
-    preset_all = f"{preset_hotel}, {preset_trend}, {preset_pf}"
+    preset_market = "건자재 가격, 친환경 자재, 모듈러 주택, 현대건설 수주, GS건설 수주, 디엘건설, 디엘이앤씨, 현대엔지니어링"
+    preset_office = "사옥 이전, 통합 사옥 건립, 스마트 오피스, 기업 연수원 건립, 공공청사 리모델링, 공유 오피스 출점, 오피스 인테리어, 데이터센터"
+    preset_trend = "건설산업연구원 전망, 대한건설협회 수주, 건축 착공 면적, 건설 수주액, 인테리어 시장 전망, 건축허가 면적, 주택 인허가 실적, 아파트 매매 거래량, 미분양 관리지역"
+    preset_pf = "부동산 신탁 수주, 신탁계약 체결, 리츠 인가, PF 대출 보증, 시행사 시공사 선정, 대구 재개발 수주, 부동산 PF 조달, 브릿지론 본PF 전환"
+    
+    preset_all = f"{preset_hotel}, {preset_market}, {preset_office}, {preset_trend}, {preset_pf}"
 
     if 'search_keywords' not in st.session_state: st.session_state['search_keywords'] = preset_hotel
     st.sidebar.subheader("⚡ 키워드 자동 완성")
@@ -160,13 +143,17 @@ if mode == "📰 뉴스 모니터링":
     c1, c2 = st.sidebar.columns(2)
     with c1:
         if st.button("🏨 호텔/리조트"): st.session_state['search_keywords'] = preset_hotel
+        if st.button("🏗️ 건자재/수주"): st.session_state['search_keywords'] = preset_market
         if st.button("💰 PF/신탁/금융"): st.session_state['search_keywords'] = preset_pf
     with c2:
+        if st.button("🏢 오피스/사옥"): st.session_state['search_keywords'] = preset_office
         if st.button("📈 건설경기 동향"): st.session_state['search_keywords'] = preset_trend
         if st.button("🔥 전체 풀세트"): st.session_state['search_keywords'] = preset_all
     
     user_input = st.sidebar.text_area("검색 키워드", key='search_keywords', height=100)
     keywords = [k.strip() for k in user_input.split(',') if k.strip()]
+    
+    period = st.sidebar.selectbox("기간", ["전체 보기", "최근 24시간", "최근 3일", "최근 1주일", "최근 1개월", "최근 3개월"])
     
     if st.button("🔄 뉴스 새로고침"): st.cache_data.clear()
 
@@ -177,7 +164,13 @@ if mode == "📰 뉴스 모니터링":
     final = []
     now = datetime.now(news[0]['published'].tzinfo) if news else datetime.now()
     for n in news:
-        if now - n['published'] <= timedelta(days=30): final.append(n)
+        diff = now - n['published']
+        if period == "최근 24시간" and diff > timedelta(hours=24): continue
+        if period == "최근 3일" and diff > timedelta(days=3): continue
+        if period == "최근 1주일" and diff > timedelta(days=7): continue
+        if period == "최근 1개월" and diff > timedelta(days=30): continue
+        if period == "최근 3개월" and diff > timedelta(days=90): continue
+        final.append(n)
 
     if not final: st.warning("뉴스 없다.")
     else:
@@ -237,66 +230,51 @@ elif mode == "🏢 기업 공시 & 재무제표":
             except: st.error("분석 실패")
 
 # ---------------------------------------------------------
-# [탭 3] 건설/부동산 통계 (초고속 필터링 버전)
+# [탭 3] 건설/부동산 통계 (속보 버전) - NEW!
 # ---------------------------------------------------------
-elif mode == "🏗️ 건설/부동산 통계":
-    st.title("🏗️ 대구/경북 건설 영업 대시보드")
-    st.markdown("**전국 / 주요 광역시 / 도별 (17개 지역)** 핵심 요약판")
+elif mode == "🏗️ 건설/부동산 통계 (속보)":
+    st.title("🏗️ 대구/경북 통계 자료 & 속보")
+    st.markdown("**통계청 API 대신 뉴스/발표자료 링크를 직접 모아준다. 속도 0.1초!**")
 
-    t1, t2, t3, t4 = st.tabs(["📉 미분양 (위험)", "🏗️ 건축허가 (미래일감)", "🏠 매매거래 (리모델링)", "🏢 준공실적 (입주)"])
+    # 1. 공식 사이트 바로가기 버튼
+    st.markdown("### 🔗 공식 데이터 원문 바로가기")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.link_button("📉 국토부 통계누리 (미분양)", "http://stat.molit.go.kr/")
+    c2.link_button("🏠 부동산원 R-ONE (거래량)", "https://www.r-one.co.kr/")
+    c3.link_button("🏗️ 세움터 (건축허가)", "https://www.eais.go.kr/")
+    c4.link_button("🦁 대구시 통계포털", "https://stat.daegu.go.kr/")
+    
+    st.divider()
 
-    def render_dashboard(stat_name, org_id, tbl_id, unit):
-        with st.spinner(f"{stat_name} 데이터 가져오는 중... (최근 6개월)"):
-            df = get_kosis_fast(org_id, tbl_id)
+    # 2. 통계 뉴스 피드 (탭 구성)
+    t1, t2, t3, t4 = st.tabs(["📉 미분양 속보", "🏗️ 건축허가/수주", "🏠 매매/거래 동향", "🏢 준공/입주 물량"])
+    
+    # 공통 뉴스 렌더링 함수
+    def render_stat_news(keywords):
+        with st.spinner("최신 발표 자료 찾는 중..."):
+            news = get_news(keywords) # 뉴스 함수 재활용
         
-        if df is not None:
-            if 'DT' in df.columns:
-                df['DT'] = pd.to_numeric(df['DT'], errors='coerce')
-                latest_date = df['PRD_DE'].max()
-                latest_df = df[df['PRD_DE'] == latest_date]
-                
-                # 1. 핵심 지표 (Metric)
-                try:
-                    # 데이터에 '대구', '경북' 등 정확한 명칭이 있는지 확인 (포함 검색)
-                    val_nat = latest_df[latest_df['C1_NM'].str.contains('전국')]['DT'].values[0]
-                    val_dg = latest_df[latest_df['C1_NM'].str.contains('대구')]['DT'].values[0]
-                    val_kb = latest_df[latest_df['C1_NM'].str.contains('경북')]['DT'].values[0]
-                    
-                    st.subheader(f"📅 {latest_date} 현황")
-                    c1, c2, c3 = st.columns(3)
-                    c1.metric("🇰🇷 전국 총계", f"{val_nat:,.0f} {unit}")
-                    c2.metric("🦁 대구", f"{val_dg:,.0f} {unit}")
-                    c3.metric("🚜 경북", f"{val_kb:,.0f} {unit}")
-                except: st.warning("핵심 지역 데이터 매칭 중 오류 발생")
+        if news:
+            # 최신순 10개만
+            for n in news[:10]:
+                with st.expander(f"({n['published'].strftime('%m/%d')}) {n['title']}"):
+                    st.write(n['summary'])
+                    st.link_button("기사 원문 보기", n['link'])
+        else:
+            st.info("관련 최신 기사가 없다.")
 
-                st.markdown("---")
+    with t1:
+        st.subheader("📉 대구/경북 미분양 현황 발표")
+        render_stat_news(["대구 미분양 통계", "경북 미분양 주택 현황", "대구 준공후 미분양", "국토부 미분양 발표"])
+    
+    with t2:
+        st.subheader("🏗️ 대구/경북 건축허가 및 수주 동향")
+        render_stat_news(["대구 건축허가 면적 통계", "대구 주택 인허가 실적", "대구 건설 수주액 통계", "경북 건축 착공 통계"])
 
-                # 2. 전국 17개 시도 비교 차트
-                st.subheader(f"📊 전국 17개 시/도 비교")
-                # 전국 합계 빼고 나머지 지역만
-                chart_df = latest_df[~latest_df['C1_NM'].str.contains('전국')].sort_values('DT', ascending=False)
-                
-                # 대구/경북 빨간색 강조
-                colors = ['#e0e0e0'] * len(chart_df)
-                regions = chart_df['C1_NM'].tolist()
-                for i, r in enumerate(regions):
-                    if '대구' in r or '경북' in r: colors[i] = '#ff4b4b'
-                
-                fig = go.Figure(data=[go.Bar(x=chart_df['C1_NM'], y=chart_df['DT'], text=chart_df['DT'], marker_color=colors)])
-                fig.update_layout(height=350, margin=dict(l=0,r=0,t=30,b=0))
-                st.plotly_chart(fig, use_container_width=True)
+    with t3:
+        st.subheader("🏠 아파트 매매 거래량 및 시장 동향")
+        render_stat_news(["대구 아파트 매매 거래량", "대구 부동산 시장 동향", "부동산원 주택 거래 현황", "대구 아파트 실거래가 지수"])
 
-                # 3. 6개월 추세선
-                st.subheader("📈 최근 6개월 추이")
-                trend_regions = ["전국", "대구", "경북"]
-                trend_df = df[df['C1_NM'].apply(lambda x: any(tr in x for tr in trend_regions))].sort_values('PRD_DE')
-                fig_line = px.line(trend_df, x='PRD_DE', y='DT', color='C1_NM', markers=True)
-                st.plotly_chart(fig_line, use_container_width=True)
-
-            else: st.error("데이터 형식 오류")
-        else: st.error("통계청 연결 실패. 잠시 후 다시.")
-
-    with t1: render_dashboard("미분양 주택", "11601", "DT_1YL202001E", "호")
-    with t2: render_dashboard("건축허가 면적", "11601", "DT_11601_202005", "㎡")
-    with t3: render_dashboard("아파트 매매 거래", "40801", "DT_40801_26", "호")
-    with t4: render_dashboard("주택 준공 실적", "11601", "DT_11601_202004", "호")
+    with t4:
+        st.subheader("🏢 주택 준공 실적 및 입주 물량")
+        render_stat_news(["대구 아파트 입주 물량", "대구 주택 준공 실적 통계", "대구 입주 경기 전망", "경북 아파트 입주"])
