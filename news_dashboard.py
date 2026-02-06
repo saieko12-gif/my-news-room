@@ -33,7 +33,7 @@ st.title("💼 B2B 영업 인텔리전스 (News & DART)")
 st.markdown("뉴스, 공시, 그리고 **누적 실적 분석**까지! **스마트한 영업맨의 비밀무기**")
 
 # ---------------------------------------------------------
-# [디자인] 제목 안 잘리게 여백 조정 (3rem)
+# [디자인] 스타일 설정
 # ---------------------------------------------------------
 st.markdown("""
     <style>
@@ -41,8 +41,6 @@ st.markdown("""
         div[data-testid="column"] { padding: 0 !important; } 
         hr { margin: 0.3rem 0 !important; } 
         .stButton button { height: 2.5rem; padding-top: 0; padding-bottom: 0; } 
-        
-        /* [추가] 링크 텍스트 예쁘게 (파란색, 밑줄 없애고 마우스 올리면 밑줄) */
         a { text-decoration: none; color: #0068c9; font-weight: bold; }
         a:hover { text-decoration: underline; }
     </style>
@@ -231,7 +229,7 @@ if mode == "📰 뉴스 모니터링":
                 st.link_button("원문 보기", n['link'])
 
 # ---------------------------------------------------------
-# [탭 2] 기업 공시 & 재무제표 (여기가 바뀜! 텍스트 링크!)
+# [탭 2] 기업 공시 & 재무제표 (세션 상태 적용!)
 # ---------------------------------------------------------
 elif mode == "🏢 기업 공시 & 재무제표":
     st.subheader("🏢 기업 분석 (공시 + 재무성장률)")
@@ -242,6 +240,7 @@ elif mode == "🏢 기업 공시 & 재무제표":
         search_text = st.text_input("회사명/종목코드", placeholder="예: 현대건설, 000720")
         final_corp = None 
         
+        # 1. 회사 선택 로직
         if search_text:
             if search_text.isdigit() and len(search_text) >= 6:
                 final_corp = search_text 
@@ -256,68 +255,76 @@ elif mode == "🏢 기업 공시 & 재무제표":
                         if st.checkbox(f"✅ '{search_text}' 강제 조회"): final_corp = search_text
                 except: final_corp = search_text
         
-        if final_corp:
-            if st.button("🚀 분석 시작"):
+        # [핵심] 버튼 누르면 세션에 '나 분석 시작했다!'라고 저장
+        if st.button("🚀 분석 시작"):
+            st.session_state['analysis_active'] = True # 분석 상태 ON
+            st.session_state['target_corp'] = final_corp # 회사 이름 저장
+
+        # 2. 분석 결과 표시 (세션 상태가 True일 때만 실행)
+        if st.session_state.get('analysis_active'):
+            target = st.session_state.get('target_corp')
+            
+            # 혹시나 회사 이름 바꿨으면 다시 버튼 누르게 유도 (데이터 꼬임 방지)
+            if target != final_corp:
+                 st.warning("⚠️ 검색어가 바뀌었다! [분석 시작] 버튼을 다시 눌러라.")
+            else:
                 # A. 재무제표
                 st.divider()
-                st.subheader(f"📈 '{final_corp}' 재무 성적표")
-                with st.spinner("누적 실적 계산 중..."):
-                    summ = get_financial_summary_advanced(dart, final_corp)
-                    if summ:
-                        st.markdown(f"**📌 기준: {summ['title']}** (전년 대비)")
-                        c1, c2, c3 = st.columns(3)
-                        
-                        s_n, s_d, s_p = summ['매출']
-                        o_n, o_d, o_p = summ['영업이익']
-                        n_n, n_d, n_p = summ['순이익']
-                        
-                        c1.metric("매출 (누적)", s_n, s_d); c1.caption(f"작년: {s_p}")
-                        c2.metric("영업이익 (누적)", o_n, o_d); c2.caption(f"작년: {o_p}")
-                        c3.metric("순이익 (누적)", n_n, n_d); c3.caption(f"작년: {n_p}")
-                        
-                        if summ['rcept_no']:
-                            st.link_button("📄 데이터 출처(보고서) 보기", f"http://dart.fss.or.kr/dsaf001/main.do?rcpNo={summ['rcept_no']}")
-                    else: st.warning("재무 정보 없음")
+                st.subheader(f"📈 '{target}' 재무 성적표")
+                
+                # 재무제표는 안 변하니까 spinner 없애도 됨 (이미 캐시됨)
+                summ = get_financial_summary_advanced(dart, target)
+                if summ:
+                    st.markdown(f"**📌 기준: {summ['title']}** (전년 대비)")
+                    c1, c2, c3 = st.columns(3)
+                    
+                    s_n, s_d, s_p = summ['매출']
+                    o_n, o_d, o_p = summ['영업이익']
+                    n_n, n_d, n_p = summ['순이익']
+                    
+                    c1.metric("매출 (누적)", s_n, s_d); c1.caption(f"작년: {s_p}")
+                    c2.metric("영업이익 (누적)", o_n, o_d); c2.caption(f"작년: {o_p}")
+                    c3.metric("순이익 (누적)", n_n, n_d); c3.caption(f"작년: {n_p}")
+                    
+                    if summ['rcept_no']:
+                        st.link_button("📄 데이터 출처(보고서) 보기", f"http://dart.fss.or.kr/dsaf001/main.do?rcpNo={summ['rcept_no']}")
+                else: st.warning("재무 정보 없음")
 
-                # B. 공시 리스트 (텍스트 링크 적용)
+                # B. 공시 리스트
                 st.divider()
                 st.subheader("📋 공시 리스트")
                 
-                with st.spinner("공시 로딩 중..."):
-                    try:
-                        end = datetime.now()
-                        start = end - timedelta(days=365)
-                        reports = dart.list(final_corp, start=start.strftime('%Y-%m-%d'), end=end.strftime('%Y-%m-%d'))
+                try:
+                    end = datetime.now()
+                    start = end - timedelta(days=365)
+                    reports = dart.list(target, start=start.strftime('%Y-%m-%d'), end=end.strftime('%Y-%m-%d'))
+                    
+                    if reports is None or reports.empty:
+                        st.error("공시 내역 없음")
+                    else:
+                        # [여기가 문제였던 곳] 이제 엔터 쳐도 안 사라짐!
+                        filter_query = st.text_input("🔍 공시 결과 내 검색 (예: 수주, 계약, 증자...)", placeholder="찾고 싶은 단어 입력...")
                         
-                        if reports is None or reports.empty:
-                            st.error("공시 내역 없음")
-                        else:
-                            filter_query = st.text_input("🔍 공시 결과 내 검색 (예: 수주, 계약, 증자...)", placeholder="찾고 싶은 단어 입력...")
+                        if filter_query:
+                            reports = reports[reports['report_nm'].str.contains(filter_query)]
+                            st.success(f"검색 결과: **{len(reports)}건**")
+                        
+                        h1, h2 = st.columns([1.5, 8.5])
+                        h1.markdown("**날짜**")
+                        h2.markdown("**공시 제목 (제출인)**")
+                        st.markdown("---")
+
+                        for idx, row in reports.iterrows():
+                            title = row['report_nm']
+                            link = f"http://dart.fss.or.kr/dsaf001/main.do?rcpNo={row['rcept_no']}"
+                            date_str = row['rcept_dt']
+                            f_date = f"{date_str[2:4]}/{date_str[4:6]}/{date_str[6:]}" 
+                            submitter = row['flr_nm']
+
+                            c1, c2 = st.columns([1.5, 8.5])
+                            c1.text(f_date)
+                            c2.markdown(f"[{title}]({link}) <span style='color:grey; font-size:0.8em'>({submitter})</span>", unsafe_allow_html=True)
                             
-                            if filter_query:
-                                reports = reports[reports['report_nm'].str.contains(filter_query)]
-                                st.success(f"검색 결과: **{len(reports)}건**")
-                            
-                            # [레이아웃 수정] 버튼 칸 없애고, 제목 칸을 넓혔다!
-                            h1, h2 = st.columns([1.5, 8.5])
-                            h1.markdown("**날짜**")
-                            h2.markdown("**공시 제목 (제출인)**")
-                            st.markdown("---")
+                            st.markdown("<hr style='margin: 3px 0; border-top: 1px solid #eee;'>", unsafe_allow_html=True)
 
-                            for idx, row in reports.iterrows():
-                                title = row['report_nm']
-                                link = f"http://dart.fss.or.kr/dsaf001/main.do?rcpNo={row['rcept_no']}"
-                                date_str = row['rcept_dt']
-                                f_date = f"{date_str[2:4]}/{date_str[4:6]}/{date_str[6:]}" 
-                                submitter = row['flr_nm']
-
-                                c1, c2 = st.columns([1.5, 8.5])
-                                c1.text(f_date)
-                                
-                                # [핵심] Markdown 링크 문법 사용 [제목](링크)
-                                # unsafe_allow_html=True를 써서 제출인은 회색으로 작게 처리함
-                                c2.markdown(f"[{title}]({link}) <span style='color:grey; font-size:0.8em'>({submitter})</span>", unsafe_allow_html=True)
-                                
-                                st.markdown("<hr style='margin: 3px 0; border-top: 1px solid #eee;'>", unsafe_allow_html=True)
-
-                    except Exception as e: st.error(f"에러: {e}")
+                except Exception as e: st.error(f"에러: {e}")
