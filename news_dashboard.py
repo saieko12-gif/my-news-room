@@ -38,12 +38,20 @@ st.markdown("""
             font-size: 0.85rem !important; 
             white-space: normal !important; 
         }
+        /* 핵심 지표 강조 스타일 */
+        .metric-box {
+            background-color: #f0f2f6;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+            box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
+        }
         a { text-decoration: none; color: #0068c9; font-weight: bold; }
         a:hover { text-decoration: underline; }
     </style>
 """, unsafe_allow_html=True)
 
-# [중요] API 키
+# [중요] API 키 (코드 내부 저장 - 화면 노출 X)
 DART_API_KEY = "3522c934d5547db5cba3f51f8d832e1a82ebce55"
 KOSIS_API_KEY = "ZDIxY2M0NTFmZThmNTZmNWZkOGYwYzYyNTMxMGIyNjg="
 
@@ -57,7 +65,7 @@ st.sidebar.header("🛠️ 설정")
 mode = st.sidebar.radio("모드 선택", ["📰 뉴스 모니터링", "🏢 기업 공시 & 재무제표", "🏗️ 건설/부동산 통계"])
 
 # ---------------------------------------------------------
-# 3. 데이터 수집 함수
+# 3. 데이터 수집 함수 (뉴스, DART, KOSIS)
 # ---------------------------------------------------------
 def clean_html(raw_html):
     if not raw_html: return ""
@@ -92,11 +100,15 @@ def get_dart_system():
     except Exception as e:
         return None
 
-# [핵심] KOSIS 직통 데이터 가져오기
+# [핵심] KOSIS 직통 데이터 (전국 기준, 최근 1년)
 @st.cache_data(ttl=3600) 
-def get_kosis_data_direct(org_id, tbl_id, start_date, end_date):
+def get_kosis_summary(org_id, tbl_id):
     try:
         api = Kosis(KOSIS_API_KEY)
+        # 전국 기준 1년치 데이터 Fetch
+        end_date = datetime.now().strftime("%Y%m")
+        start_date = (datetime.now() - relativedelta(years=1)).strftime("%Y%m")
+        
         df = api.get_data(
             "KOSIS통합검색", 
             orgId=org_id,
@@ -325,105 +337,90 @@ elif mode == "🏢 기업 공시 & 재무제표":
 # [탭 3] 건설/부동산 통계 (요약 & 속도 최적화 버전)
 # ---------------------------------------------------------
 elif mode == "🏗️ 건설/부동산 통계":
-    st.title("🏗️ 건설 & 부동산 시장 통계")
-    st.markdown("통계청(KOSIS) 데이터를 실시간으로 요약해 준데이. **(단위: 호, ㎡)**")
-    
-    col_p1, col_p2 = st.columns([1, 3])
-    with col_p1:
-        date_opt = st.selectbox("조회 기간 설정", ["최근 3년 (기본)", "최근 1년 (빠름)", "직접 입력"])
-    
-    now = datetime.now()
-    if date_opt == "최근 3년 (기본)":
-        start_date = (now - relativedelta(years=3)).strftime("%Y%m")
-        end_date = now.strftime("%Y%m")
-    elif date_opt == "최근 1년 (빠름)":
-        start_date = (now - relativedelta(years=1)).strftime("%Y%m")
-        end_date = now.strftime("%Y%m")
-    else: 
-        c_y1, c_y2 = st.columns(2)
-        s_y = c_y1.text_input("시작 년월 (예: 202001)", value=(now - relativedelta(years=3)).strftime("%Y%m"))
-        e_y = c_y2.text_input("종료 년월 (예: 202401)", value=now.strftime("%Y%m"))
-        start_date = s_y
-        end_date = e_y
-    
-    # API 키 입력창 삭제 (내장 키 사용)
-    
-    stat_type = st.radio("보고 싶은 통계 선택", 
-                         ["📉 미분양주택현황 (위험신호)", 
-                          "🏗️ 건축허가면적 (선행지표)",
-                          "🏠 주택매매거래현황 (리모델링 수요)",
-                          "🏢 주택준공실적 (입주/가구수요)"], 
-                         horizontal=True)
-    
-    if st.button("📊 데이터 가져오기"):
-        with st.spinner("통계청 서버 털어오는 중..."):
-            
-            org_id = ""; tbl_id = ""
-            if "미분양" in stat_type: 
-                org_id = "11601"; tbl_id = "DT_1YL202001E"
-            elif "건축허가" in stat_type: 
-                org_id = "11601"; tbl_id = "DT_11601_202005"
-            elif "주택매매" in stat_type: 
-                org_id = "40801"; tbl_id = "DT_40801_26"
-            elif "주택준공" in stat_type: 
-                org_id = "11601"; tbl_id = "DT_11601_202004"
-            
-            df = get_kosis_data_direct(org_id, tbl_id, start_date, end_date)
-            
-            if df is not None:
-                st.subheader(f"📊 {stat_type.split()[1]} ({start_date} ~ {end_date})")
+    st.title("🏗️ 대구/경북 건설 영업 대시보드 (전국 기준)")
+    st.markdown("**국토교통부 & 한국부동산원** 핵심 통계 요약판이데이. (전국 17개 시도 전체 스캔)")
+
+    # 탭 메뉴
+    t1, t2, t3, t4 = st.tabs(["📉 미분양 (위험)", "🏗️ 건축허가 (미래일감)", "🏠 매매거래 (리모델링)", "🏢 준공실적 (입주)"])
+
+    # 공통 대시보드 렌더링 함수
+    def render_dashboard(stat_name, org_id, tbl_id, unit):
+        # 1년치 데이터 가져오기 (KOSIS 직통)
+        with st.spinner(f"{stat_name} 데이터 긁어오는 중... (전국 기준)"):
+            df = get_kosis_summary(org_id, tbl_id)
+        
+        if df is not None:
+            # 데이터 전처리: '전국' 및 '17개 시도'만 남기기
+            if 'DT' in df.columns:
+                df['DT'] = pd.to_numeric(df['DT'], errors='coerce')
                 
-                # 데이터 전처리: 필요한 컬럼만 딱 남기기
-                # 'PRD_DE': 시점, 'C1_NM': 지역, 'DT': 값
-                if 'DT' in df.columns:
-                    df['DT'] = pd.to_numeric(df['DT'], errors='coerce')
+                # 주요 지역 필터링 (구/군 제외)
+                regions = ["전국", "서울", "부산", "대구", "인천", "광주", "대전", "울산", "세종", "경기", "강원", "충북", "충남", "전북", "전남", "경북", "경남", "제주"]
+                filtered_df = df[df['C1_NM'].isin(regions)].copy()
+                
+                # 최신 날짜 기준 데이터 추출
+                latest_date = filtered_df['PRD_DE'].max()
+                latest_df = filtered_df[filtered_df['PRD_DE'] == latest_date]
+                
+                # 1. 핵심 요약 (Metric) - 전국 / 대구 / 경북
+                st.subheader(f"📅 {latest_date} 핵심 요약")
+                
+                try:
+                    val_nat = latest_df[latest_df['C1_NM']=='전국']['DT'].values[0]
+                    val_dg = latest_df[latest_df['C1_NM']=='대구']['DT'].values[0]
+                    val_kb = latest_df[latest_df['C1_NM']=='경북']['DT'].values[0]
                     
-                    # [핵심] 불필요한 하위 행정구역(구/군) 날리고 시/도만 남기기
-                    # 통계청 데이터에는 '종로구', '수성구' 같은 게 섞여 있음. 
-                    # 1차적으로 '전국', '수도권', '지방' 그리고 '시/도' 이름만 필터링하는 게 깔끔함.
-                    # 주요 시도 리스트 정의
-                    major_regions = ["전국", "서울", "부산", "대구", "인천", "광주", "대전", "울산", "세종", "경기", "강원", "충북", "충남", "전북", "전남", "경북", "경남", "제주"]
-                    
-                    # C1_NM이 major_regions에 포함되는 것만 남기거나, 
-                    # 혹은 데이터가 너무 많으면 '전국' + '대구' + '경북' 만 딱 보여줄 수도 있음.
-                    # 여기서는 전체 시도만 필터링함.
-                    
-                    # 필터링 로직: C1_NM이 주요 시도 이름으로 시작하는 것만 남김
-                    filtered_df = df[df['C1_NM'].apply(lambda x: any(x.startswith(r) for r in major_regions))]
-                    
-                    # 컬럼 이름 깔끔하게 변경
-                    view_df = filtered_df[['PRD_DE', 'C1_NM', 'DT']].copy()
-                    view_df.columns = ['시점', '지역', '데이터(호/㎡)']
-                    
-                    # 피벗 테이블 만들기 (행: 시점, 열: 지역, 값: 데이터) -> 엑셀처럼 보기 편함
-                    pivot_df = view_df.pivot(index='시점', columns='지역', values='데이터(호/㎡)')
-                    pivot_df = pivot_df.sort_index(ascending=False) # 최신순 정렬
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("🇰🇷 전국 총계", f"{val_nat:,.0f} {unit}")
+                    c2.metric("🦁 대구", f"{val_dg:,.0f} {unit}", delta="우리 구역", delta_color="off")
+                    c3.metric("🚜 경북", f"{val_kb:,.0f} {unit}", delta="우리 구역", delta_color="off")
+                except:
+                    st.warning("주요 지역 데이터 매칭 실패. 아래 그래프 확인 바람.")
 
-                    # 1. 최신 현황 차트 (Bar) - 지역별 비교
-                    latest_date = df['PRD_DE'].max()
-                    st.info(f"📅 **{latest_date} 기준** 최신 현황 (단위: 호 or ㎡)")
-                    
-                    # 차트용 데이터 (전국/수도권 제외하고 순수 지역만)
-                    chart_target = view_df[view_df['시점'] == latest_date]
-                    chart_target = chart_target[~chart_target['지역'].str.contains("전국|수도권|지방")]
-                    chart_target = chart_target.sort_values(by='데이터(호/㎡)', ascending=False).head(17) # 17개 시도
-                    
-                    fig_bar = px.bar(chart_target, x='지역', y='데이터(호/㎡)', text='데이터(호/㎡)', color='데이터(호/㎡)', color_continuous_scale='Reds')
-                    st.plotly_chart(fig_bar, use_container_width=True)
+                st.markdown("---")
 
-                    # 2. 내 관심 지역 추세 (Line) - 대구/경북/전국
-                    st.markdown("##### 📈 주요 지역 추세 (대구/경북/전국)")
-                    trend_regions = ["전국", "대구", "경북"]
-                    trend_df = view_df[view_df['지역'].isin(trend_regions)].sort_values('시점')
-                    
-                    fig_line = px.line(trend_df, x='시점', y='데이터(호/㎡)', color='지역', markers=True)
-                    st.plotly_chart(fig_line, use_container_width=True)
+                # 2. 전국 시도별 순위 차트 (Bar)
+                st.subheader(f"📊 전국 시도별 {stat_name} 순위")
+                
+                # 전국 합계 제외하고 순수 지역 비교
+                rank_df = latest_df[latest_df['C1_NM'] != '전국'].sort_values('DT', ascending=False)
+                
+                # 대구/경북 강조 색상
+                colors = ['#e6e6e6'] * len(rank_df) # 기본 회색
+                regions_list = rank_df['C1_NM'].tolist()
+                if '대구' in regions_list: colors[regions_list.index('대구')] = '#ff4b4b' # 빨강
+                if '경북' in regions_list: colors[regions_list.index('경북')] = '#ff4b4b' # 빨강
+                
+                fig = go.Figure(data=[go.Bar(
+                    x=rank_df['C1_NM'],
+                    y=rank_df['DT'],
+                    text=rank_df['DT'],
+                    marker_color=colors # 강조 색상 적용
+                )])
+                fig.update_layout(title=f"전국 지역별 비교 ({latest_date})", height=400)
+                st.plotly_chart(fig, use_container_width=True)
 
-                    # 3. 전체 요약 표 (피벗)
-                    with st.expander("📄 전체 시도별 데이터 표 보기 (클릭)"):
-                        st.dataframe(pivot_df)
-                else:
-                    st.error("데이터 형식 문제 발생. 원본 데이터 확인 필요.")
-                    st.write(df.head())
+                # 3. 주요 지역 추세 (Line) - 1년치
+                st.subheader(f"📈 주요 지역 추세 (대구/경북/전국)")
+                trend_regions = ['전국', '대구', '경북']
+                trend_df = filtered_df[filtered_df['C1_NM'].isin(trend_regions)].sort_values('PRD_DE')
+                
+                fig_line = px.line(trend_df, x='PRD_DE', y='DT', color='C1_NM', markers=True, 
+                                   labels={'DT':f'{stat_name} ({unit})', 'PRD_DE':'시점'})
+                st.plotly_chart(fig_line, use_container_width=True)
+                
+                # 4. 전체 데이터 표
+                with st.expander("📄 전국 전체 데이터 표 보기"):
+                    pivot_df = filtered_df.pivot(index='PRD_DE', columns='C1_NM', values='DT').sort_index(ascending=False)
+                    st.dataframe(pivot_df, use_container_width=True)
+
             else:
-                st.error("데이터 못 가져왔다. (API 키 확인 또는 기간을 줄여봐라)")
+                st.error("데이터 형식 오류. 원본 확인 필요.")
+        else:
+            st.error("통계청 연결 실패. 잠시 후 다시 시도.")
+
+    # 탭별 실행
+    with t1: render_dashboard("미분양 주택", "11601", "DT_1YL202001E", "호")
+    with t2: render_dashboard("건축허가 면적", "11601", "DT_11601_202005", "㎡")
+    with t3: render_dashboard("아파트 매매 거래", "40801", "DT_40801_26", "호")
+    with t4: render_dashboard("주택 준공 실적", "11601", "DT_11601_202004", "호")
