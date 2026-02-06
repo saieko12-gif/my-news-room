@@ -30,7 +30,7 @@ except:
     pass
 
 st.title("💼 B2B 영업 인텔리전스 (News & DART)")
-st.markdown("뉴스, 공시, 그리고 **성장률 분석**까지! **스마트한 영업맨의 비밀무기**")
+st.markdown("뉴스, 공시, 그리고 **누적 실적 분석**까지! **스마트한 영업맨의 비밀무기**")
 
 # ---------------------------------------------------------
 # 2. 사이드바 (모드 선택)
@@ -76,12 +76,11 @@ def get_dart_system():
     except Exception as e:
         return None
 
-# [핵심] 재무제표 + 성장률 + 링크까지 다 가져오는 함수
+# [핵심 수정] 3개월치 말고 '누적' 데이터 우선 추출하도록 변경!
 def get_financial_summary_advanced(dart, corp_name):
     # 2025년부터 역순으로 검색
     years = [2025, 2024]
     
-    # 보고서 코드 정의
     report_codes = [
         ('11011', '사업보고서 (1년 확정)'), 
         ('11014', '3분기보고서 (누적)'), 
@@ -92,7 +91,6 @@ def get_financial_summary_advanced(dart, corp_name):
     for year in years:
         for code, code_name in report_codes:
             try:
-                # 1. 재무제표 데이터 요청
                 fs = dart.finstate(corp_name, year, reprt_code=code)
                 
                 if fs is not None and not fs.empty:
@@ -100,14 +98,30 @@ def get_financial_summary_advanced(dart, corp_name):
                     if target_fs.empty:
                         target_fs = fs[fs['fs_div'] == 'OFS']
 
+                    # 값 추출 함수 (누적 우선 로직 적용)
                     def get_data_pair(account_names):
                         for nm in account_names:
                             row = target_fs[target_fs['account_nm'] == nm]
                             if not row.empty:
                                 try:
-                                    this_val_str = row.iloc[0]['thstrm_amount']
-                                    prev_val_str = row.iloc[0]['frmtrm_amount']
+                                    # [여기가 핵심!] thstrm_add_amount(당기누적)가 있으면 그거 쓰고, 없으면 thstrm_amount(당기) 씀
+                                    # 분기 보고서의 경우: add_amount = 누적, amount = 3개월치
                                     
+                                    # 1. 올해 값 (This Term)
+                                    this_val_str = ""
+                                    if 'thstrm_add_amount' in row.columns and not pd.isna(row.iloc[0]['thstrm_add_amount']) and row.iloc[0]['thstrm_add_amount'] != '':
+                                        this_val_str = row.iloc[0]['thstrm_add_amount'] # 누적 우선
+                                    else:
+                                        this_val_str = row.iloc[0]['thstrm_amount'] # 없으면 그냥 당기
+
+                                    # 2. 작년 값 (Former Term) - 비교용
+                                    prev_val_str = ""
+                                    if 'frmtrm_add_amount' in row.columns and not pd.isna(row.iloc[0]['frmtrm_add_amount']) and row.iloc[0]['frmtrm_add_amount'] != '':
+                                        prev_val_str = row.iloc[0]['frmtrm_add_amount'] # 작년 누적
+                                    else:
+                                        prev_val_str = row.iloc[0]['frmtrm_amount'] # 작년 당기
+
+                                    # 숫자 변환
                                     this_val = float(str(this_val_str).replace(',', ''))
                                     
                                     if pd.isna(prev_val_str) or prev_val_str == '':
@@ -115,9 +129,11 @@ def get_financial_summary_advanced(dart, corp_name):
                                     else:
                                         prev_val = float(str(prev_val_str).replace(',', ''))
 
+                                    # 억원 단위 표시
                                     this_view = "{:,} 억".format(int(this_val / 100000000))
                                     prev_view = "{:,} 억".format(int(prev_val / 100000000))
                                     
+                                    # 성장률 계산
                                     if prev_val == 0:
                                         delta = None
                                     else:
@@ -135,7 +151,7 @@ def get_financial_summary_advanced(dart, corp_name):
                     
                     if sales_now == "-": continue 
 
-                    # 2. 보고서 원문 링크 찾기
+                    # 링크 찾기
                     rcept_no = ""
                     try:
                         start_dt = f"{year}-01-01"
@@ -148,9 +164,6 @@ def get_financial_summary_advanced(dart, corp_name):
                         elif code == '11012': target_name_keyword = "반기보고서"
                         
                         for idx, row in reports.iterrows():
-                            if target_name_keyword in row['report_nm'] and str(year) in str(row['rcept_dt']): 
-                                rcept_no = row['rcept_no']
-                                break
                             if target_name_keyword in row['report_nm']:
                                 rcept_no = row['rcept_no']
                                 break
@@ -158,7 +171,7 @@ def get_financial_summary_advanced(dart, corp_name):
                         rcept_no = ""
 
                     summary = {
-                        "title": f"{year}년 {code_name} (누적 기준)",
+                        "title": f"{year}년 {code_name} (누적 실적)", # 제목도 '누적'으로 변경
                         "매출": (sales_now, sales_delta, sales_prev),
                         "영업이익": (op_now, op_delta, op_prev),
                         "순이익": (net_now, net_delta, net_prev),
@@ -172,11 +185,9 @@ def get_financial_summary_advanced(dart, corp_name):
     return None
 
 # ---------------------------------------------------------
-# [탭 1] 뉴스 모니터링 (여기가 업데이트 됨!)
+# [탭 1] 뉴스 모니터링
 # ---------------------------------------------------------
 if mode == "📰 뉴스 모니터링":
-    
-    # [수정] 니가 요청한 새로운 키워드셋 적용 완료!
     preset_hotel = "호텔 리모델링, 신규 호텔 오픈, 리조트 착공, 5성급 호텔 리뉴얼, 호텔 FF&E, 생활숙박시설 분양, 호텔 매각, 샌즈"
     preset_office = "사옥 이전, 통합 사옥 건립, 스마트 오피스, 기업 연수원 건립, 공공청사 리모델링, 공유 오피스 출점, 오피스 인테리어, 데이터센터"
     preset_market = "건자재 가격, 친환경 자재, 모듈러 주택, 현대건설 수주, GS건설 수주, 디엘건설, 디엘이앤씨, 현대엔지니어링"
@@ -261,7 +272,7 @@ if mode == "📰 뉴스 모니터링":
 elif mode == "🏢 기업 공시 & 재무제표":
     
     st.subheader("🏢 기업 분석 (공시 + 재무성장률)")
-    st.markdown("전년 대비 **얼마나 성장했는지** 한눈에 보여준데이!")
+    st.markdown("전년 대비 **얼마나 성장했는지(누적 기준)** 한눈에 보여준데이!")
     
     dart = get_dart_system()
     
@@ -297,7 +308,7 @@ elif mode == "🏢 기업 공시 & 재무제표":
                 st.divider()
                 st.subheader(f"📈 '{final_corp_name}' 재무 성적표")
                 
-                with st.spinner("작년이랑 실적 비교하는 중..."):
+                with st.spinner("누적 실적(조 단위) 계산하는 중..."):
                     summary = get_financial_summary_advanced(dart, final_corp_name)
                     
                     if summary:
@@ -305,32 +316,29 @@ elif mode == "🏢 기업 공시 & 재무제표":
                         
                         col_f1, col_f2, col_f3 = st.columns(3)
                         
-                        # (현재값, 성장률%, 작년값)
                         s_now, s_delta, s_prev = summary['매출']
                         o_now, o_delta, o_prev = summary['영업이익']
                         n_now, n_delta, n_prev = summary['순이익']
                         
                         with col_f1:
                             st.metric("매출액 (누적)", s_now, s_delta)
-                            st.caption(f"작년: {s_prev}")
+                            st.caption(f"작년 누적: {s_prev}")
                         with col_f2:
                             st.metric("영업이익 (누적)", o_now, o_delta)
-                            st.caption(f"작년: {o_prev}")
+                            st.caption(f"작년 누적: {o_prev}")
                         with col_f3:
                             st.metric("당기순이익 (누적)", n_now, n_delta)
-                            st.caption(f"작년: {n_prev}")
+                            st.caption(f"작년 누적: {n_prev}")
                             
-                        # 간단 분석 코멘트
                         if s_delta and "-" not in s_delta: 
                             growth = float(s_delta.replace('%',''))
                             if growth > 10:
-                                st.success("🚀 와! 매출이 작년보다 10% 이상 뛰었네! 분위기 좋다.")
+                                st.success("🚀 와! 누적 매출이 작년보다 10% 이상 뛰었네! 분위기 좋다.")
                             elif growth > 0:
                                 st.info("🙂 작년보다 매출이 조금 늘었다. 선방했네.")
                             else:
                                 st.error("📉 작년보다 매출이 줄었다. 회사 분위기 살벌하겠는데?")
                                 
-                        # 원본 보고서 링크 버튼
                         if summary['rcept_no']:
                             dart_link = f"http://dart.fss.or.kr/dsaf001/main.do?rcpNo={summary['rcept_no']}"
                             st.link_button("📄 이 데이터 뽑아온 [분기보고서 원문] 보러가기", dart_link)
