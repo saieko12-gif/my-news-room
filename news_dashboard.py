@@ -42,7 +42,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# [중요] API 키 설정
+# [중요] API 키 설정 (화면에 절대 노출 안 됨)
 DART_API_KEY = "3522c934d5547db5cba3f51f8d832e1a82ebce55"
 KOSIS_API_KEY = "ZDIxY2M0NTFmZThmNTZmNWZkOGYwYzYyNTMxMGIyNjg="
 
@@ -56,14 +56,14 @@ st.sidebar.header("🛠️ 설정")
 mode = st.sidebar.radio("모드 선택", ["📰 뉴스 모니터링", "🏢 기업 공시 & 재무제표", "🏗️ 건설/부동산 통계"])
 
 # ---------------------------------------------------------
-# 3. 공통 함수들
+# 3. 데이터 수집 함수 (캐싱 적용으로 속도 향상!)
 # ---------------------------------------------------------
 def clean_html(raw_html):
     if not raw_html: return ""
     cleanr = re.compile('<.*?>')
     return re.sub(cleanr, '', raw_html)[:150] + "..." 
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=600) # 10분 동안 저장
 def get_news(search_terms):
     all_news = []
     for term in search_terms:
@@ -89,6 +89,16 @@ def get_dart_system():
         dart = OpenDartReader(DART_API_KEY) 
         return dart
     except Exception as e:
+        return None
+
+# [속도 개선] KOSIS 데이터 캐싱 적용 (한 번 받으면 1시간 동안 저장)
+@st.cache_data(ttl=3600) 
+def get_kosis_data(search_nm):
+    try:
+        api = Kosis(KOSIS_API_KEY)
+        df = api.get_data("KOSIS통합검색", searchNm=search_nm)
+        return df
+    except:
         return None
 
 def get_financial_summary_advanced(dart, corp_name):
@@ -146,7 +156,6 @@ def get_stock_chart(target, code):
 # ---------------------------------------------------------
 if mode == "📰 뉴스 모니터링":
     st.title("💼 B2B 영업 인텔리전스")
-    # [복구] 귀여운 멘트 부활!
     st.markdown("뉴스, 공시, 재무, 그리고 **주가 흐름**까지! **스마트한 영업맨의 비밀무기**")
     
     preset_hotel = "호텔 리모델링, 신규 호텔 오픈, 리조트 착공, 5성급 호텔 리뉴얼, 호텔 FF&E, 생활숙박시설 분양, 호텔 매각, 샌즈"
@@ -226,7 +235,6 @@ if mode == "📰 뉴스 모니터링":
 # ---------------------------------------------------------
 elif mode == "🏢 기업 공시 & 재무제표":
     st.title("🏢 기업 분석 (상장사 + 신탁사)")
-    # [삭제] 여기에 있던 신탁사 검색 팁(st.info) 제거함!
     
     dart = get_dart_system()
     if dart is None: st.error("API 연결 실패")
@@ -292,7 +300,6 @@ elif mode == "🏢 기업 공시 & 재무제표":
                         if fq: rpts = rpts[rpts['report_nm'].str.contains(fq)]
                         st.success(f"{len(rpts)}건 발견")
                         
-                        # [유지] 검색 결과 내 팁은 살려둠 (이건 유용하니까)
                         if "신탁" in dn or "자산" in dn:
                             st.info("💡 **Tip:** 신탁사는 **'신탁계약'**이나 **'공사도급계약'**을 검색하면 현장 정보가 나온데이!")
 
@@ -313,59 +320,67 @@ elif mode == "🏗️ 건설/부동산 통계":
     st.title("🏗️ 건설 & 부동산 시장 통계")
     st.markdown("통계청(KOSIS) 데이터를 실시간으로 가져온데이. **영업의 미래는 숫자에 있다!**")
     
-    kosis_key = st.text_input("🔑 KOSIS API Key", value=KOSIS_API_KEY, type="password", help="코드를 수정하면 기본값을 바꿀 수 있다.")
+    # [수정] API 키 입력창 삭제! 자동으로 KOSIS_API_KEY 사용함.
     
-    if not kosis_key:
-        st.warning("⚠️ API 키가 없으면 작동 안 한데이.")
-    else:
-        stat_type = st.radio("보고 싶은 통계 선택", ["📉 미분양주택현황 (위험신호)", "🏗️ 건축허가면적 (선행지표)"], horizontal=True)
-        
-        if st.button("📊 데이터 가져오기"):
-            try:
-                api = Kosis(kosis_key)
-                
-                if "미분양" in stat_type:
+    stat_type = st.radio("보고 싶은 통계 선택", 
+                         ["📉 미분양주택현황 (위험신호)", 
+                          "🏗️ 건축허가면적 (선행지표)",
+                          "🏠 주택매매거래현황 (리모델링 수요)",
+                          "🏢 주택준공실적 (입주/가구수요)"], 
+                         horizontal=True)
+    
+    if st.button("📊 데이터 가져오기"):
+        # 캐싱된 함수를 호출해서 속도 UP!
+        with st.spinner("통계청 서버 털어오는 중... (처음엔 좀 걸린데이)"):
+            if "미분양" in stat_type:
+                df = get_kosis_data("미분양주택현황")
+                if df is not None:
                     st.subheader("📉 지역별 미분양 주택 현황")
-                    with st.spinner("통계청 서버 털어오는 중..."):
-                        df = api.get_data("KOSIS통합검색", searchNm="미분양주택현황")
-                        
-                        if df is not None and not df.empty:
-                            st.success(f"데이터 가져왔다! (기준: {df['PRD_DE'].max()})")
-                            
-                            target_df = df[df['PRD_DE'] == df['PRD_DE'].max()] 
-                            target_df['DT'] = pd.to_numeric(target_df['DT'], errors='coerce') 
-                            
-                            chart_df = target_df[~target_df['C1_NM'].str.contains("전국|수도권|지방")]
-                            chart_df = chart_df.sort_values(by='DT', ascending=False).head(15) 
-                            
-                            fig = px.bar(chart_df, x='C1_NM', y='DT', text='DT', title=f"지역별 미분양 TOP 15 ({target_df['PRD_DE'].iloc[0]})", color='DT', color_continuous_scale='Reds')
-                            st.plotly_chart(fig, use_container_width=True)
-                            
-                            with st.expander("📄 전체 데이터 보기"):
-                                st.dataframe(df)
-                        else:
-                            st.error("데이터가 비어있다. API 키가 맞나 확인해봐라.")
+                    st.success(f"데이터 로딩 완료 (기준: {df['PRD_DE'].max()})")
+                    target_df = df[df['PRD_DE'] == df['PRD_DE'].max()] 
+                    target_df['DT'] = pd.to_numeric(target_df['DT'], errors='coerce') 
+                    chart_df = target_df[~target_df['C1_NM'].str.contains("전국|수도권|지방")]
+                    chart_df = chart_df.sort_values(by='DT', ascending=False).head(15) 
+                    fig = px.bar(chart_df, x='C1_NM', y='DT', text='DT', title="지역별 미분양 TOP 15", color='DT', color_continuous_scale='Reds')
+                    st.plotly_chart(fig, use_container_width=True)
+                    with st.expander("📄 원본 데이터"): st.dataframe(df)
 
-                elif "건축허가" in stat_type:
+            elif "건축허가" in stat_type:
+                df = get_kosis_data("건축허가현황")
+                if df is not None:
                     st.subheader("🏗️ 건축허가면적 (향후 일감)")
-                    with st.spinner("통계청 서버 털어오는 중..."):
-                        df = api.get_data("KOSIS통합검색", searchNm="건축허가현황")
-                        
-                        if df is not None and not df.empty:
-                            st.success(f"데이터 가져왔다! (기준: {df['PRD_DE'].max()})")
-                            
-                            ts_df = df[df['C1_NM'] == '전국']
-                            ts_df['DT'] = pd.to_numeric(ts_df['DT'], errors='coerce')
-                            ts_df = ts_df.sort_values('PRD_DE')
-                            
-                            fig = px.line(ts_df, x='PRD_DE', y='DT', markers=True, title="전국 건축허가면적 추이", labels={'DT':'면적(㎡)'})
-                            st.plotly_chart(fig, use_container_width=True)
-                            
-                            with st.expander("📄 전체 데이터 보기"):
-                                st.dataframe(df)
-                        else:
-                            st.error("데이터 못 가져왔다.")
+                    st.success(f"데이터 로딩 완료 (기준: {df['PRD_DE'].max()})")
+                    ts_df = df[df['C1_NM'] == '전국']
+                    ts_df['DT'] = pd.to_numeric(ts_df['DT'], errors='coerce')
+                    ts_df = ts_df.sort_values('PRD_DE')
+                    fig = px.line(ts_df, x='PRD_DE', y='DT', markers=True, title="전국 건축허가면적 추이")
+                    st.plotly_chart(fig, use_container_width=True)
+                    with st.expander("📄 원본 데이터"): st.dataframe(df)
 
-            except Exception as e:
-                st.error(f"에러 났다: {e}")
-                st.info("혹시 API 키가 틀렸거나, 트래픽 초과일 수도 있다.")
+            elif "주택매매" in stat_type:
+                df = get_kosis_data("아파트매매거래현황")
+                if df is not None:
+                    st.subheader("🏠 아파트 매매 거래 현황 (리모델링 수요)")
+                    st.success(f"데이터 로딩 완료 (기준: {df['PRD_DE'].max()})")
+                    ts_df = df[df['C1_NM'] == '전국']
+                    ts_df['DT'] = pd.to_numeric(ts_df['DT'], errors='coerce')
+                    ts_df = ts_df.sort_values('PRD_DE')
+                    fig = px.bar(ts_df, x='PRD_DE', y='DT', title="전국 아파트 매매 거래량 추이")
+                    st.plotly_chart(fig, use_container_width=True)
+                    with st.expander("📄 원본 데이터"): st.dataframe(df)
+
+            elif "주택준공" in stat_type:
+                df = get_kosis_data("주택준공실적")
+                if df is not None:
+                    st.subheader("🏢 주택 준공 실적 (가구/인테리어 타이밍)")
+                    st.success(f"데이터 로딩 완료 (기준: {df['PRD_DE'].max()})")
+                    target_df = df[df['PRD_DE'] == df['PRD_DE'].max()]
+                    target_df['DT'] = pd.to_numeric(target_df['DT'], errors='coerce')
+                    chart_df = target_df[~target_df['C1_NM'].str.contains("전국|수도권|지방")]
+                    chart_df = chart_df.sort_values(by='DT', ascending=False).head(15)
+                    fig = px.bar(chart_df, x='C1_NM', y='DT', text='DT', title="지역별 준공 실적 TOP 15 (최신)", color='DT', color_continuous_scale='Greens')
+                    st.plotly_chart(fig, use_container_width=True)
+                    with st.expander("📄 원본 데이터"): st.dataframe(df)
+            
+            if df is None:
+                st.error("데이터 못 가져왔다. API 키 확인해라.")
