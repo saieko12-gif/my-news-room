@@ -257,7 +257,7 @@ if mode == "📰 뉴스 모니터링":
     
     preset_market = (
         "친환경 자재, 현대건설 수주, GS건설 수주, 디엘건설, 디엘이앤씨, "
-        "현대엔지니어링, 삼성물산 수주, 대우건설 수주, 세라믹 자재, 건설자재, 건자재"
+        "현대엔지니어링, 삼성물산 수주, 대우건설 수주, 세라믹 자재, 건설자재, 건자재, 컬러강판"
     )
     
     preset_trend = (
@@ -436,3 +436,4 @@ elif mode == "🏢 기업 공시 & 재무제표":
                         c2.markdown(f"[{r['report_nm']}]({lk}) <span style='color:grey; font-size:0.8em'>({r['flr_nm']})</span>", unsafe_allow_html=True)
                         st.markdown("<hr style='margin: 3px 0; border-top: 1px solid #eee;'>", unsafe_allow_html=True)
             except: st.error("공시 로딩 실패")
+
