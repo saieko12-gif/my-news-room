@@ -67,21 +67,32 @@ def clean_html(raw_html):
 @st.cache_data(ttl=600)
 def get_news(search_terms):
     all_news = []
+    seen_titles = set()  # [핵심] 중복 제목 체크용 장부
+
     for term in search_terms:
         encoded_term = urllib.parse.quote(term)
         url = f"https://news.google.com/rss/search?q={encoded_term}&hl=ko&gl=KR&ceid=KR:ko"
         feed = feedparser.parse(url)
+        
         for entry in feed.entries:
-            try: pub_date = parser.parse(entry.published)
-            except: pub_date = datetime.now()
-            all_news.append({
-                'keyword': term,
-                'title': entry.title,
-                'link': entry.link,
-                'published': pub_date,
-                'summary': clean_html(entry.get('description', '')),
-                'source': entry.get('source', {}).get('title', 'Google News')
-            })
+            # 1. 제목 가져오기
+            title = entry.title
+            
+            # 2. 중복 검사 (장부에 없으면 통과)
+            if title not in seen_titles:
+                seen_titles.add(title) # 장부에 등록
+                
+                try: pub_date = parser.parse(entry.published)
+                except: pub_date = datetime.now()
+                
+                all_news.append({
+                    'keyword': term,
+                    'title': title,
+                    'link': entry.link,
+                    'published': pub_date,
+                    'summary': clean_html(entry.get('description', '')),
+                    'source': entry.get('source', {}).get('title', 'Google News')
+                })
     return all_news
 
 @st.cache_resource
@@ -152,7 +163,6 @@ if mode == "📰 뉴스 모니터링":
     preset_hotel = "호텔 리모델링, 신규 호텔 오픈, 리조트 착공, 5성급 호텔 리뉴얼, 호텔 FF&E, 생활숙박시설 분양, 호텔 매각, 샌즈"
     preset_office = "사옥 이전, 통합 사옥 건립, 스마트 오피스, 기업 연수원 건립, 공공청사 리모델링, 공유 오피스 출점, 오피스 인테리어, 데이터센터"
     
-    # [변경] 니가 요청한 리스트로 완벽 교체!
     preset_market = (
         "친환경 자재, 현대건설 수주, GS건설 수주, 디엘건설, 디엘이앤씨, "
         "현대엔지니어링, 삼성물산 수주, 대우건설 수주, 세라믹 자재, 건설자재, 건자재"
@@ -171,7 +181,7 @@ if mode == "📰 뉴스 모니터링":
 
     preset_policy = (
         "주택 공급 대책, 노후계획도시 특별법, 재건축 규제 완화, 부동산 PF 지원, 그린벨트 해제, "
-        "공공분양 뉴홈, 다주택자 규제, 수도권 규제, 과열지구, 투기지구, 주택담보대출, 전세자금 대출"
+        "공공분양 뉴홈, 다주택자 규제, 수도권 규제, 투기과열지구, 대출 규제, 전월세"
     )
 
     if 'search_keywords' not in st.session_state: st.session_state['search_keywords'] = preset_hotel
@@ -239,7 +249,6 @@ elif mode == "🏢 기업 공시 & 재무제표":
     dart = get_dart_system()
     if dart is None: st.error("API 연결 실패")
     else:
-        # [변경] 예시 문구 현대리바트로 교체
         search_txt = st.text_input("회사명 또는 종목코드", placeholder="예: 현대리바트, 079430")
         final_corp = None; stock_code = None
 
