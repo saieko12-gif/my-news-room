@@ -64,7 +64,6 @@ def clean_html(raw_html):
     cleanr = re.compile('<.*?>')
     return re.sub(cleanr, '', raw_html)[:150] + "..." 
 
-# 제목 정규화 (중복 제거용)
 def normalize_title(title):
     title = re.sub(r'\[.*?\]', '', title)
     title = title.split(' - ')[0]
@@ -110,7 +109,7 @@ def get_dart_system():
     except Exception as e:
         return None
 
-# [핵심] 재무제표 분석 강화 (현금흐름 띄어쓰기 수정, 영업이익률 표시 수정)
+# [핵심] 재무제표 분석: 현금흐름 강제 탐색 & 디테일한 한줄평
 def get_financial_summary_advanced(dart, corp_name):
     years = [2025, 2024]
     codes = [('11011','사업보고서'), ('11014','3분기'), ('11012','반기'), ('11013','1분기')]
@@ -123,6 +122,7 @@ def get_financial_summary_advanced(dart, corp_name):
                 t_fs = fs[fs['fs_div']=='CFS']
                 if t_fs.empty: t_fs = fs[fs['fs_div']=='OFS']
                 
+                # 1. 일반 항목 찾기 (정확한 매칭)
                 def gv(nms):
                     for nm in nms:
                         r = t_fs[t_fs['account_nm']==nm]
@@ -139,14 +139,30 @@ def get_financial_summary_advanced(dart, corp_name):
                             except: continue
                     return None, None, None, "-"
 
-                # 1. 실적 (매출, 영업이익, 순이익)
+                # 2. [NEW] 현금흐름 강제 탐색 (포함 검색)
+                # '영업'과 '현금'이 동시에 들어간 계정과목을 찾음
+                def gv_fuzzy(k1, k2):
+                    # 공백 제거 후 검색 (띄어쓰기 무시)
+                    mask = t_fs['account_nm'].str.replace(' ', '').str.contains(k1) & t_fs['account_nm'].str.contains(k2)
+                    r = t_fs[mask]
+                    if not r.empty:
+                        try:
+                            # 여러 개 나오면 금액이 제일 큰 거(보통 합계) 선택
+                            row = r.iloc[0] # 첫 번째꺼 일단 선택
+                            ts = row.get('thstrm_add_amount', row['thstrm_amount'])
+                            if pd.isna(ts) or ts=='': ts = row['thstrm_amount']
+                            tv = float(str(ts).replace(',',''))
+                            return tv, "{:,} 억".format(int(tv/100000000))
+                        except: return None, "-"
+                    return None, "-"
+
+                # --- 데이터 추출 ---
                 sn_val, sd, sp_val, sn_str = gv(['매출액', '수익(매출액)'])
                 on_val, od, op_val, on_str = gv(['영업이익', '영업이익(손실)'])
                 nn_val, nd, np_val, nn_str = gv(['당기순이익', '당기순이익(손실)'])
                 
                 if sn_str == "-": continue
 
-                # 2. 안정성 (자산, 부채, 자본, 유동자산, 유동부채)
                 assets_val, _, _, assets_str = gv(['자산총계'])
                 liab_val, _, _, liab_str = gv(['부채총계'])
                 equity_val, _, _, equity_str = gv(['자본총계'])
@@ -154,36 +170,51 @@ def get_financial_summary_advanced(dart, corp_name):
                 curr_assets_val, _, _, _ = gv(['유동자산'])
                 curr_liab_val, _, _, _ = gv(['유동부채'])
 
-                # [수정] 현금흐름 키워드 대폭 추가 (띄어쓰기 대응)
-                cfo_val, _, _, cfo_str = gv(['영업활동현금흐름', '영업활동으로인한현금흐름', '영업활동으로 인한 현금흐름', '영업활동 현금흐름'])
+                # [수정] 현금흐름을 '포함 검색'으로 찾음
+                cfo_val, cfo_str = gv_fuzzy('영업', '현금')
 
-                # 4. 비율 계산
+                # 비율 계산
                 opm = 0; debt_ratio = 0; curr_ratio = 0
                 if sn_val and sn_val != 0: opm = (on_val / sn_val) * 100
                 if equity_val and equity_val != 0: debt_ratio = (liab_val / equity_val) * 100
                 if curr_liab_val and curr_liab_val != 0: curr_ratio = (curr_assets_val / curr_liab_val) * 100
-
-                # [수정] 영업이익 표시 형식 변경: "100억 (5.5%)"
+                
+                # 매출 증감율 숫자화
+                rev_growth = float(sd.replace('%', '')) if sd else 0
+                
                 on_display = f"{on_str} ({opm:.1f}%)"
 
-                # 5. [AI 한줄평 로직]
+                # 5. [NEW] 구체적인 AI 한줄평 로직
                 comments = []
-                if sd and float(sd.replace('%','')) > 0: comments.append("매출이 늘어가 성장세가 좋고")
-                else: comments.append("매출이 쪼매 줄어들긴 했지만")
                 
-                if on_val and on_val > 0: comments.append("돈도(영업이익) 흑자로 잘 벌고 있네.")
-                else: comments.append("영업이익이 적자라 쪼매 아쉽네.")
-
-                risk_msg = ""
-                if cfo_val and cfo_val > 0: 
-                    if curr_ratio >= 100: risk_msg = "현금도 잘 돌고 지갑(유동비율)도 빵빵해서 튼튼하다!"
-                    else: risk_msg = "현금은 도는데 당장 쓸 돈(유동비율)은 좀 챙기야겠네."
+                # (1) 성장성 & 수익성 크로스 체크
+                if rev_growth > 5 and opm > 5:
+                    comments.append(f"🚀 매출도 {rev_growth}% 뛰고 장사도 알짜배기(이익률 {opm:.1f}%)네!")
+                elif rev_growth > 5 and opm < 2:
+                    comments.append("📈 덩치는 커지는데 남는 게 별로 없다(이익률 낮음). 실속 챙기야 된다.")
+                elif rev_growth < 0 and opm > 5:
+                    comments.append("📉 매출은 줄었지만 그래도 이익률은 방어 잘했다.")
+                elif rev_growth < 0 and on_val < 0:
+                    comments.append("비상이다! 🚨 매출도 줄고 적자까지 났다.")
                 else:
-                    if curr_ratio >= 100: risk_msg = "현금흐름은 마이너스지만 모아둔 돈(유동자산)은 있어서 버틸만하다."
-                    else: risk_msg = "❗ 마, 현금도 안 돌고 지갑도 얇다. 수금(결제) 조심해라!"
+                    comments.append(f"매출 흐름은 {rev_growth}% 정도고,")
+
+                # (2) 현금흐름 & 유동성 (흑자부도 체크)
+                if on_val > 0 and (cfo_val is None or cfo_val < 0):
+                    comments.append("<b>❗ 주의:</b> 장부상 이익은 났는데 통장에 현금이 안 돈다(흑자부도 위험). 수금 조건 빡세게 봐라.")
+                elif cfo_val and cfo_val > 0 and curr_ratio < 100:
+                    comments.append("현금은 도는데 당장 갚을 돈(유동비율)이 빠듯하다.")
+                elif cfo_val and cfo_val > 0 and curr_ratio >= 200:
+                    comments.append("현금 빵빵하고 곳간도 넉넉하니 아주 튼튼하다.")
                 
-                comments.append(risk_msg)
+                # (3) 부채 경고
+                if debt_ratio > 250:
+                    comments.append(f"빚이 억수로 많다(부채비율 {debt_ratio:.0f}%). 조심해라.")
+
                 one_line_summary = " ".join(comments)
+                
+                # 데이터가 너무 없으면 기본 멘트
+                if not one_line_summary: one_line_summary = "실적 데이터는 있는데 특이사항은 딱히 안 보이네. 무난하다."
 
                 rn = ""
                 try:
@@ -196,7 +227,7 @@ def get_financial_summary_advanced(dart, corp_name):
                 return {
                     "title": f"{year}년 {c_name} (누적)", 
                     "매출": (sn_str, sd, "{:,} 억".format(int(sp_val/100000000)) if sp_val else "-"), 
-                    "영업": (on_display, od, "{:,} 억".format(int(op_val/100000000)) if op_val else "-"), # [수정] 표시값 변경
+                    "영업": (on_display, od, "{:,} 억".format(int(op_val/100000000)) if op_val else "-"), 
                     "순익": (nn_str, nd, "{:,} 억".format(int(np_val/100000000)) if np_val else "-"),
                     "자산": assets_str,
                     "부채비율": f"{debt_ratio:.1f}%",
@@ -371,19 +402,16 @@ elif mode == "🏢 기업 공시 & 재무제표":
             if sm:
                 st.markdown(f"**📌 {sm['title']}** (전년 대비)")
                 
-                # AI 한줄평
-                st.success(f"💬 **[AI 영업맨 한줄평]** {sm['한줄평']}")
+                # [수정] 업그레이드된 한줄평 출력
+                st.success(f"💬 **[AI 영업맨 한줄평]** {sm['한줄평']}", icon="📢")
                 
-                # [수정] 메인 지표 3개 (영업이익에 마진율 포함)
                 c1,c2,c3 = st.columns(3)
                 c1.metric("매출(누적)", sm['매출'][0], sm['매출'][1]); c1.caption(f"작년: {sm['매출'][2]}")
-                # sm['영업'][0]는 이제 "100억 (5.5%)" 형태임, sm['영업'][2]는 작년 금액
                 c2.metric("영업이익 (이익률)", sm['영업'][0], sm['영업'][1]); c2.caption(f"작년: {sm['영업'][2]}") 
                 c3.metric("순이익", sm['순익'][0], sm['순익'][1]); c3.caption(f"작년: {sm['순익'][2]}")
                 
                 st.markdown("---")
                 
-                # 서브 지표 3개
                 k1, k2, k3 = st.columns(3)
                 k1.metric("영업활동현금흐름 (돈맥)", sm['현금흐름'], help="영업으로 실제 벌어들인 현금 (+면 좋음)")
                 k2.metric("유동비율 (지급능력)", sm['유동비율'], help="100% 이상이면 단기 부채 상환 능력 양호")
