@@ -143,27 +143,33 @@ def get_stock_chart(target, code):
 if mode == "📰 뉴스 모니터링":
     st.title("💼 B2B 영업 인텔리전스")
     
-    # 1. 원래 있던 키워드 (호텔, 오피스, 건자재)
+    # 1. 기존 타겟 키워드 (살려둠)
     preset_hotel = "호텔 리모델링, 신규 호텔 오픈, 리조트 착공, 5성급 호텔 리뉴얼, 호텔 FF&E, 생활숙박시설 분양, 호텔 매각, 샌즈"
     preset_office = "사옥 이전, 통합 사옥 건립, 스마트 오피스, 기업 연수원 건립, 공공청사 리모델링, 공유 오피스 출점, 오피스 인테리어, 데이터센터"
     preset_market = "건자재 가격, 친환경 자재, 모듈러 주택, 현대건설 수주, GS건설 수주, 디엘건설, 디엘이앤씨, 현대엔지니어링"
     
-    # 2. 새로 추가한 인사이트 (건설동향, PF/신탁)
-    preset_trend = "건설산업연구원 전망, 대한건설협회 수주, 건축 착공 면적, 건설 수주액, 인테리어 시장 전망"
-    preset_pf = "부동산 신탁 수주, 신탁계약 체결, 리츠 인가, PF 대출 보증, 시행사 시공사 선정, 대구 재개발 수주"
+    # 2. [확장] 건설경기 동향 (거시경제 + 선행지표 + 리스크) - 니가 요청한 넓은 범위!
+    preset_trend = (
+        "건설산업연구원 전망, 대한건설협회 수주, 건축 착공 면적, 건설 수주액, 인테리어 시장 전망, "
+        "건축허가 면적, 주택 인허가 실적, 아파트 매매 거래량, 미분양 관리지역, 노후계획도시 특별법"
+    )
+    
+    # 3. [확장] PF/신탁/금융 (돈줄)
+    preset_pf = (
+        "부동산 신탁 수주, 신탁계약 체결, 리츠 인가, PF 대출 보증, 시행사 시공사 선정, 대구 재개발 수주, "
+        "부동산 PF 조달, 브릿지론 본PF 전환, 그린리모델링 사업"
+    )
 
-    # 전체 합치기
     preset_all = f"{preset_hotel}, {preset_office}, {preset_market}, {preset_trend}, {preset_pf}"
 
     if 'search_keywords' not in st.session_state: st.session_state['search_keywords'] = preset_hotel
     st.sidebar.subheader("⚡ 키워드 자동 완성")
     
-    # 버튼 배치 (2열 3행으로 깔끔하게)
     c1, c2 = st.sidebar.columns(2)
     with c1:
         if st.button("🏨 호텔/리조트"): st.session_state['search_keywords'] = preset_hotel
         if st.button("🏗️ 건자재/수주"): st.session_state['search_keywords'] = preset_market
-        if st.button("💰 PF/신탁/개발"): st.session_state['search_keywords'] = preset_pf
+        if st.button("💰 PF/신탁/금융"): st.session_state['search_keywords'] = preset_pf
     with c2:
         if st.button("🏢 오피스/사옥"): st.session_state['search_keywords'] = preset_office
         if st.button("📈 건설경기 동향"): st.session_state['search_keywords'] = preset_trend
@@ -172,7 +178,6 @@ if mode == "📰 뉴스 모니터링":
     user_input = st.sidebar.text_area("검색 키워드", key='search_keywords', height=100)
     keywords = [k.strip() for k in user_input.split(',') if k.strip()]
     
-    # [수정] '최근 1개월' 다시 살려냄
     period = st.sidebar.selectbox("기간", ["전체 보기", "최근 24시간", "최근 3일", "최근 1주일", "최근 1개월"])
     
     if st.button("🔄 뉴스 새로고침"): st.cache_data.clear()
@@ -188,7 +193,7 @@ if mode == "📰 뉴스 모니터링":
         if period == "최근 24시간" and diff > timedelta(hours=24): continue
         if period == "최근 3일" and diff > timedelta(days=3): continue
         if period == "최근 1주일" and diff > timedelta(days=7): continue
-        if period == "최근 1개월" and diff > timedelta(days=30): continue # 여기 로직 추가됨
+        if period == "최근 1개월" and diff > timedelta(days=30): continue
         final.append(n)
 
     if not final: st.warning("뉴스 없음")
