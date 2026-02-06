@@ -4,3 +4,4 @@ finance-datareader
 pandas
 plotly
 opendartreader
+PublicDataReader
