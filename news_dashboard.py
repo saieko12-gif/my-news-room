@@ -184,6 +184,15 @@ if mode == "📰 뉴스 모니터링":
     
     user_input = st.sidebar.text_area("검색 키워드 (쉼표로 구분)", key='search_keywords', height=100)
     keywords = [k.strip() for k in user_input.split(',') if k.strip()]
+
+    # [NEW] 차트/이미지 검색 버튼 (입력창 바로 아래 배치)
+    if keywords:
+        # 첫 번째 키워드를 대표로 사용 + '통계 차트' 검색어 조합
+        main_keyword = keywords[0]
+        enc_query = urllib.parse.quote(f"{main_keyword} 통계 차트 그래프")
+        url = f"https://www.google.com/search?q={enc_query}&tbm=isch"
+        
+        st.link_button(f"📊 '{main_keyword}' 관련 차트/이미지 검색 (구글)", url, type="primary")
     
     period = st.sidebar.selectbox("기간", ["전체 보기", "최근 24시간", "최근 3일", "최근 1주일", "최근 1개월", "최근 3개월"])
     
@@ -243,18 +252,13 @@ elif mode == "🏢 기업 공시 & 재무제표":
             else:
                 try:
                     cdf = dart.corp_codes
-                    # [핵심 로직] 정확한 기업 찾기 로직 개선
-                    # 1. 일단 포함된 이름 다 찾음
                     matches = cdf[cdf['corp_name'].str.contains(search_txt, na=False)]
                     
                     if not matches.empty:
-                        # 2. 우선순위 정렬: stock_code가 있는(상장사) 순서대로 정렬!
-                        # stock_code가 None이거나 비어있으면 뒤로 보냄
+                        # 상장사(stock_code 있음) 우선 정렬
                         matches['is_listed'] = matches['stock_code'].apply(lambda x: 0 if x and str(x).strip() != '' else 1)
                         matches = matches.sort_values(by='is_listed')
                         
-                        # 3. 셀렉트 박스에 보여줄 때는 "기업명 (종목코드)" 형태로 보여줌 -> 구분하기 쉽게
-                        # 상장사는 코드 표시, 비상장사는 '비상장/기타' 표시
                         def format_name(row):
                             code = row['stock_code']
                             if code and str(code).strip(): return f"{row['corp_name']} ({code})"
@@ -262,16 +266,14 @@ elif mode == "🏢 기업 공시 & 재무제표":
                         
                         matches['display_name'] = matches.apply(format_name, axis=1)
                         
-                        # 상위 50개만
                         sl = matches['display_name'].tolist()[:50]
                         sn = st.selectbox(f"검색 결과 ({len(matches)}개)", sl)
                         
-                        # 선택된 놈 정보 가져오기
                         selected_row = matches[matches['display_name'] == sn].iloc[0]
                         final_corp = selected_row['corp_code']
                         stock_code = selected_row['stock_code'] if selected_row['stock_code'] and str(selected_row['stock_code']).strip() else None
                         
-                        st.session_state['dn'] = selected_row['corp_name'] # 이름 저장
+                        st.session_state['dn'] = selected_row['corp_name']
                     else:
                         st.warning("목록에 없음")
                         if st.checkbox("강제 조회"): final_corp = search_txt; st.session_state['dn'] = search_txt
@@ -283,7 +285,6 @@ elif mode == "🏢 기업 공시 & 재무제표":
         if st.session_state.get('act'):
             tgt = st.session_state.get('cp'); sc = st.session_state.get('sc'); dn = st.session_state.get('dn', tgt)
             
-            # 분석 화면 시작
             if sc:
                 st.divider(); st.subheader(f"📈 {dn} 주가")
                 res = get_stock_chart(dn, sc)
@@ -302,7 +303,7 @@ elif mode == "🏢 기업 공시 & 재무제표":
                 c2.metric("영업이익", sm['영업'][0], sm['영업'][1]); c2.caption(f"작년: {sm['영업'][2]}")
                 c3.metric("순이익", sm['순익'][0], sm['순익'][1]); c3.caption(f"작년: {sm['순익'][2]}")
                 if sm['link']: st.link_button("📄 원문 보고서", f"http://dart.fss.or.kr/dsaf001/main.do?rcpNo={sm['link']}")
-            else: st.warning("재무 데이터 없음 (DART에 공시된 사업보고서가 없거나 형식이 다름)")
+            else: st.warning("재무 데이터 없음")
 
             st.divider(); st.subheader("📋 공시 내역")
             try:
