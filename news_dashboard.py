@@ -8,7 +8,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import OpenDartReader
 import FinanceDataReader as fdr
-import difflib # [NEW] 텍스트 유사도 비교용 내장 라이브러리 (가볍다!)
+# import difflib  <-- [삭제] 속도 저하 주범 검거 및 삭제
 from datetime import datetime, timedelta
 from dateutil import parser
 
@@ -65,20 +65,22 @@ def clean_html(raw_html):
     cleanr = re.compile('<.*?>')
     return re.sub(cleanr, '', raw_html)[:150] + "..." 
 
-# [NEW] 제목 정규화 함수 (비교를 위해 꼬리표 떼기)
+# [핵심] 제목 정규화 (꼬리표 제거) - 단순 비교용
 def normalize_title(title):
     # 1. 대괄호 [] 안의 내용 제거 (예: [속보], [단독])
     title = re.sub(r'\[.*?\]', '', title)
-    # 2. 뒤에 붙은 언론사 이름 제거 (예: ... - 네이트, ... - 이데일리)
+    # 2. 뒤에 붙은 언론사 이름 등 꼬리표 제거
+    # ' - ' 또는 ' | ' 또는 '...' 등을 기준으로 자름
     title = title.split(' - ')[0]
     title = title.split(' | ')[0]
-    # 3. 공백 제거하고 리턴
+    title = title.split('...')[0] # 말줄임표 뒤도 날림
+    # 3. 공백 제거 및 리턴
     return title.strip()
 
 @st.cache_data(ttl=600)
 def get_news(search_terms):
     all_news = []
-    seen_titles = [] # [NEW] 단순 제목이 아니라 '정제된 제목' 리스트를 저장
+    seen_titles = set() # [변경] set을 써서 검색 속도 O(1)로 최적화
 
     for term in search_terms:
         encoded_term = urllib.parse.quote(term)
@@ -87,31 +89,27 @@ def get_news(search_terms):
         
         for entry in feed.entries:
             raw_title = entry.title
-            clean_t = normalize_title(raw_title) # 비교용 알맹이 제목
+            # 정제된 제목 생성 (꼬리표 뗀 거)
+            clean_t = normalize_title(raw_title) 
             
-            # [핵심 로직] 유사도 80% 이상인지 검사
-            is_duplicate = False
-            for existing_title in seen_titles:
-                # difflib로 유사도 계산 (0.0 ~ 1.0)
-                similarity = difflib.SequenceMatcher(None, clean_t, existing_title).ratio()
-                if similarity >= 0.8: # 80% 이상 비슷하면 중복으로 간주
-                    is_duplicate = True
-                    break
+            # [초고속 중복 검사] 
+            # 계산 안 하고, 그냥 장부(set)에 있는지만 확인 -> 0.0001초 컷
+            if clean_t in seen_titles:
+                continue # 중복이면 패스
             
-            if not is_duplicate:
-                seen_titles.append(clean_t) # 장부에 등록
-                
-                try: pub_date = parser.parse(entry.published)
-                except: pub_date = datetime.now()
-                
-                all_news.append({
-                    'keyword': term,
-                    'title': raw_title, # 보여줄 때는 원본 제목 보여줌
-                    'link': entry.link,
-                    'published': pub_date,
-                    'summary': clean_html(entry.get('description', '')),
-                    'source': entry.get('source', {}).get('title', 'Google News')
-                })
+            seen_titles.add(clean_t) # 장부에 등록
+            
+            try: pub_date = parser.parse(entry.published)
+            except: pub_date = datetime.now()
+            
+            all_news.append({
+                'keyword': term,
+                'title': raw_title, # 보여줄 땐 원본 제목
+                'link': entry.link,
+                'published': pub_date,
+                'summary': clean_html(entry.get('description', '')),
+                'source': entry.get('source', {}).get('title', 'Google News')
+            })
     return all_news
 
 @st.cache_resource
@@ -223,7 +221,7 @@ if mode == "📰 뉴스 모니터링":
     
     if st.button("🔄 뉴스 새로고침"): st.cache_data.clear()
 
-    with st.spinner('뉴스 수집 중... (중복 제거 필터 가동 중 🧹)'):
+    with st.spinner('뉴스 수집 중... (중복 필터 적용 완료)'):
         news = get_news(keywords)
     news.sort(key=lambda x: x['published'], reverse=True)
     
