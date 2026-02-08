@@ -11,6 +11,7 @@ import FinanceDataReader as fdr
 from datetime import datetime, timedelta
 from dateutil import parser
 import time
+import io
 
 # ---------------------------------------------------------
 # 1. 설정 & 스타일
@@ -224,7 +225,7 @@ def get_financial_summary_advanced(dart, corp_name):
             except: continue
     return None
 
-# [변경] 영역 차트: Y축 범위 자동 조정 (변동성 확대) & 높이 축소
+# 영역 차트 (1개월~3년) - Y축 스케일링 & 높이 축소
 def get_stock_chart(target, code, days):
     try:
         df = fdr.DataReader(code, datetime.now()-timedelta(days=days), datetime.now())
@@ -232,28 +233,27 @@ def get_stock_chart(target, code, days):
         l = df['Close'].iloc[-1]; p = df['Close'].iloc[-2]; c = ((l-p)/p)*100
         clr = '#ff4b4b' if c>0 else '#4b4bff'
         
-        # [NEW] Y축 범위 동적 계산 (최저/최고가 기준 + 5% 여유)
+        # Y축 범위 동적 계산
         min_p = df['Close'].min()
         max_p = df['Close'].max()
-        margin = (max_p - min_p) * 0.1 # 10% 여유
-        if margin == 0: margin = min_p * 0.05 # 일직선일 경우 예외처리
+        margin = (max_p - min_p) * 0.1
+        if margin == 0: margin = min_p * 0.05
 
         fig = px.area(df, x=df.index, y='Close')
         
-        # [NEW] update_layout에서 높이 250으로 축소, yaxis_range 설정
         fig.update_layout(
             xaxis_title="", 
             yaxis_title="", 
-            height=250, # 높이 축소 (기존 350)
+            height=250, # 높이 축소
             margin=dict(t=10,b=10,l=10,r=10), 
             showlegend=False,
-            yaxis_range=[min_p - margin, max_p + margin] # 0원부터 시작 안 함
+            yaxis_range=[min_p - margin, max_p + margin]
         )
         fig.update_traces(line_color=clr)
         return fig, l, c
     except: return None
 
-# [변경] 캔들 차트: 높이 축소
+# 캔들 차트 (일봉/주봉/월봉)
 def plot_advanced_chart(code, days, interval):
     try:
         start_date = datetime.now() - timedelta(days=days)
@@ -289,65 +289,104 @@ def plot_advanced_chart(code, days, interval):
     except Exception as e:
         return None, 0, 0
 
-# [핵심 변경] 기재정정 완벽 파싱 + 아파트 세대수 추출
+# [초강력 업그레이드] 표 구조 인식 파싱 + 아파트 규모 추출
 def extract_contract_details(dart, rcp_no):
+    contract_name = "-"
+    contract_amt = "-"
+    amt_val = 0
+    end_date = "-"
+    apt_desc = ""
+
     try:
+        # 1. 텍스트 추출 (Regex용 - 아파트 규모 등)
         xml_text = dart.document(rcp_no)
         
-        # 1. 계약명
-        nm_match = re.search(r'(계약명|공사명|계약의 명칭).*?</td>.*?<td.*?>(.*?)</td>', xml_text, re.DOTALL)
-        contract_name = "-"
-        if nm_match:
-            contract_name = re.sub('<.*?>', '', nm_match.group(2)).strip()
-        
-        # 2. 계약금액
-        amt_match = re.search(r'(계약금액|확정계약금액).*?</td>.*?<td.*?>(.*?)</td>', xml_text, re.DOTALL)
-        contract_amt = "-"
-        amt_val = 0
-        if amt_match:
-            raw_amt_clean = re.sub('<.*?>', '', amt_match.group(2)).replace(',','').strip()
-            nums = re.findall(r'\d+', raw_amt_clean)
-            if nums:
-                amt_val = int("".join(nums))
-                contract_amt = f"{amt_val / 100000000:,.1f} 억"
-
-        # 3. [UPGRADE] 계약기간 (기재정정 대응: 날짜 여러 개면 가장 늦은 날짜 추출)
-        end_date = "-"
-        
-        # 날짜 패턴 (YYYY-MM-DD 또는 YYYY.MM.DD)
-        date_pattern = r'20\d{2}[-.]\d{2}[-.]\d{2}'
-        
-        # "종료일" or "계약기간" 키워드가 있는 행을 찾음
-        period_rows = re.findall(r'(계약기간|종료일|공사기간).*?</tr>', xml_text, re.DOTALL)
-        
-        found_dates = []
-        for row in period_rows:
-            # 해당 행에 있는 모든 날짜 추출
-            dates = re.findall(date_pattern, row)
-            found_dates.extend(dates)
-            
-        if found_dates:
-            # 추출된 날짜 중 가장 늦은 날짜를 종료일로 간주 (정정 후 날짜일 확률 높음)
-            found_dates.sort()
-            end_date = found_dates[-1]
-
-        # 4. [NEW] 아파트 규모 (동수, 세대수) 추출
+        # --- 아파트 규모 (동수, 세대수) 추출 (Regex가 유리) ---
         apt_info = []
-        # "개동" 추출 (예: 8개동, 8 개동)
+        # '공사개요' 주변이나 문서 전체에서 패턴 찾기
         dong_match = re.search(r'(\d+)\s*개?\s*동', xml_text)
-        if dong_match:
-            apt_info.append(f"{dong_match.group(1)}개동")
-            
-        # "세대" 추출 (예: 722세대, 1,000 세대)
+        if dong_match: apt_info.append(f"{dong_match.group(1)}개동")
+        
         sede_match = re.search(r'(\d{1,3}(?:,\d{3})*)\s*세대', xml_text)
-        if sede_match:
-            apt_info.append(f"{sede_match.group(1)}세대")
-            
-        apt_desc = ", ".join(apt_info) if apt_info else ""
+        if sede_match: apt_info.append(f"{sede_match.group(1)}세대")
+        
+        apt_desc = ", ".join(apt_info)
 
-        return contract_name, contract_amt, amt_val, end_date, apt_desc
-    except:
+        # 2. 표(Table) 파싱 (pandas 사용 - 기재정정 대응)
+        try:
+            dfs = pd.read_html(io.StringIO(xml_text))
+        except:
+            dfs = [] # 표 파싱 실패시 regex fallback
+
+        found_amt = False
+        found_date = False
+
+        for df in dfs:
+            # 데이터프레임 전처리 (NaN 처리)
+            df = df.fillna("")
+            
+            # 각 행을 순회하며 키워드 찾기
+            for idx, row in df.iterrows():
+                row_str = " ".join(map(str, row.values))
+                
+                # (1) 계약명 찾기
+                if not contract_name or contract_name == "-":
+                    if "계약명" in row_str or "공사명" in row_str:
+                        # 보통 값은 마지막 열(Column)에 있음 (정정후)
+                        val = str(row.iloc[-1]).strip()
+                        if val and val != "nan": contract_name = val
+
+                # (2) 계약금액 찾기
+                if not found_amt:
+                    if "계약금액" in row_str or "확정계약금액" in row_str:
+                        # 마지막 열의 값 가져오기 (정정후 금액)
+                        raw_val = str(row.iloc[-1])
+                        # 숫자만 추출
+                        nums = re.findall(r'\d+', raw_val.replace(',',''))
+                        if nums:
+                            total_str = "".join(nums)
+                            if len(total_str) > 8: # 1억 이상일 때만 (오인식 방지)
+                                amt_val = int(total_str)
+                                contract_amt = f"{amt_val / 100000000:,.1f} 억"
+                                found_amt = True
+
+                # (3) 계약기간(종료일) 찾기
+                if not found_date:
+                    if "계약기간" in row_str or "종료일" in row_str or "공사기간" in row_str:
+                        # 마지막 열의 값 가져오기 (정정후 기간)
+                        raw_val = str(row.iloc[-1])
+                        # 날짜 패턴 추출 (YYYY-MM-DD or YYYY.MM.DD)
+                        dates = re.findall(r'20\d{2}[-.]\d{2}[-.]\d{2}', raw_val)
+                        if dates:
+                            dates.sort() # 오름차순 정렬
+                            end_date = dates[-1] # 가장 늦은 날짜 = 종료일
+                            found_date = True
+
+        # 표 파싱으로 못 찾았을 경우 기존 Regex Fallback
+        if contract_amt == "-":
+            amt_match = re.search(r'(계약금액|확정계약금액).*?</td>.*?<td.*?>(.*?)</td>', xml_text, re.DOTALL)
+            if amt_match:
+                raw_amt_clean = re.sub('<.*?>', '', amt_match.group(2)).replace(',','').strip()
+                nums = re.findall(r'\d+', raw_amt_clean)
+                if nums:
+                    amt_val = int("".join(nums))
+                    contract_amt = f"{amt_val / 100000000:,.1f} 억"
+
+        if end_date == "-":
+             # Regex로 다시 시도
+            period_rows = re.findall(r'(계약기간|종료일|공사기간).*?</tr>', xml_text, re.DOTALL)
+            found_dates = []
+            for row in period_rows:
+                dates = re.findall(r'20\d{2}[-.]\d{2}[-.]\d{2}', row)
+                found_dates.extend(dates)
+            if found_dates:
+                found_dates.sort()
+                end_date = found_dates[-1]
+
+    except Exception as e:
         return "-", "-", 0, "-", ""
+
+    return contract_name, contract_amt, amt_val, end_date, apt_desc
 
 # ---------------------------------------------------------
 # [탭 1] 뉴스 모니터링
@@ -622,7 +661,7 @@ elif mode == "🏗️ 수주/계약 현황 (Lead)":
                     leads = leads.head(10)
                     
                     for i, r in leads.iterrows():
-                        # [UPGRADE] 날짜 정밀 파싱 + 아파트 규모 추출
+                        # [UPGRADE] 표(Table) 단위 파싱 + 아파트 규모
                         c_name, c_amt, c_val, c_end, c_apt = extract_contract_details(dart, r['rcept_no'])
                         display_name = c_name if c_name != "-" else r['report_nm']
                         
@@ -632,7 +671,7 @@ elif mode == "🏗️ 수주/계약 현황 (Lead)":
                             "계약명 (현장)": display_name,
                             "계약금액": c_amt,
                             "준공예정일 (종료일)": c_end,
-                            "규모 (공사개요)": c_apt, # [NEW]
+                            "규모 (공사개요)": c_apt,
                             "금액(숫자)": c_val,
                             "공시제목": r['report_nm'],
                             "링크": f"http://dart.fss.or.kr/dsaf001/main.do?rcpNo={r['rcept_no']}"
