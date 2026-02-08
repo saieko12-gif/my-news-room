@@ -224,20 +224,36 @@ def get_financial_summary_advanced(dart, corp_name):
             except: continue
     return None
 
-# [변경] 기존 영역(Area) 차트 함수 - 기간(days)을 인자로 받도록 수정
+# [변경] 영역 차트: Y축 범위 자동 조정 (변동성 확대) & 높이 축소
 def get_stock_chart(target, code, days):
     try:
         df = fdr.DataReader(code, datetime.now()-timedelta(days=days), datetime.now())
         if df.empty: return None
         l = df['Close'].iloc[-1]; p = df['Close'].iloc[-2]; c = ((l-p)/p)*100
         clr = '#ff4b4b' if c>0 else '#4b4bff'
+        
+        # [NEW] Y축 범위 동적 계산 (최저/최고가 기준 + 5% 여유)
+        min_p = df['Close'].min()
+        max_p = df['Close'].max()
+        margin = (max_p - min_p) * 0.1 # 10% 여유
+        if margin == 0: margin = min_p * 0.05 # 일직선일 경우 예외처리
+
         fig = px.area(df, x=df.index, y='Close')
-        fig.update_layout(xaxis_title="", yaxis_title="", height=350, margin=dict(t=20,b=20,l=20,r=20), showlegend=False)
+        
+        # [NEW] update_layout에서 높이 250으로 축소, yaxis_range 설정
+        fig.update_layout(
+            xaxis_title="", 
+            yaxis_title="", 
+            height=250, # 높이 축소 (기존 350)
+            margin=dict(t=10,b=10,l=10,r=10), 
+            showlegend=False,
+            yaxis_range=[min_p - margin, max_p + margin] # 0원부터 시작 안 함
+        )
         fig.update_traces(line_color=clr)
         return fig, l, c
     except: return None
 
-# [변경] 캔들(봉) 차트 함수
+# [변경] 캔들 차트: 높이 축소
 def plot_advanced_chart(code, days, interval):
     try:
         start_date = datetime.now() - timedelta(days=days)
@@ -259,8 +275,8 @@ def plot_advanced_chart(code, days, interval):
 
         fig.update_layout(
             xaxis_rangeslider_visible=False,
-            height=350,
-            margin=dict(t=20,b=20,l=20,r=20),
+            height=250, # 높이 축소
+            margin=dict(t=10,b=10,l=10,r=10),
             yaxis_title="주가 (원)",
             showlegend=False
         )
@@ -273,15 +289,18 @@ def plot_advanced_chart(code, days, interval):
     except Exception as e:
         return None, 0, 0
 
+# [핵심 변경] 기재정정 완벽 파싱 + 아파트 세대수 추출
 def extract_contract_details(dart, rcp_no):
     try:
         xml_text = dart.document(rcp_no)
         
+        # 1. 계약명
         nm_match = re.search(r'(계약명|공사명|계약의 명칭).*?</td>.*?<td.*?>(.*?)</td>', xml_text, re.DOTALL)
         contract_name = "-"
         if nm_match:
             contract_name = re.sub('<.*?>', '', nm_match.group(2)).strip()
         
+        # 2. 계약금액
         amt_match = re.search(r'(계약금액|확정계약금액).*?</td>.*?<td.*?>(.*?)</td>', xml_text, re.DOTALL)
         contract_amt = "-"
         amt_val = 0
@@ -292,23 +311,43 @@ def extract_contract_details(dart, rcp_no):
                 amt_val = int("".join(nums))
                 contract_amt = f"{amt_val / 100000000:,.1f} 억"
 
+        # 3. [UPGRADE] 계약기간 (기재정정 대응: 날짜 여러 개면 가장 늦은 날짜 추출)
         end_date = "-"
-        period_match = re.search(r'(계약기간).*?</td>.*?<td.*?>(.*?)</td>', xml_text, re.DOTALL)
-        if period_match:
-            period_txt = re.sub('<.*?>', '', period_match.group(2)).strip()
-            if '~' in period_txt:
-                end_date = period_txt.split('~')[-1].strip()
-            elif '-' in period_txt and len(period_txt) > 15:
-                 end_date = period_txt.split('-')[-1].strip()
+        
+        # 날짜 패턴 (YYYY-MM-DD 또는 YYYY.MM.DD)
+        date_pattern = r'20\d{2}[-.]\d{2}[-.]\d{2}'
+        
+        # "종료일" or "계약기간" 키워드가 있는 행을 찾음
+        period_rows = re.findall(r'(계약기간|종료일|공사기간).*?</tr>', xml_text, re.DOTALL)
+        
+        found_dates = []
+        for row in period_rows:
+            # 해당 행에 있는 모든 날짜 추출
+            dates = re.findall(date_pattern, row)
+            found_dates.extend(dates)
+            
+        if found_dates:
+            # 추출된 날짜 중 가장 늦은 날짜를 종료일로 간주 (정정 후 날짜일 확률 높음)
+            found_dates.sort()
+            end_date = found_dates[-1]
 
-        if end_date == "-" or len(end_date) < 8:
-            end_match = re.search(r'(계약종료일|종료일).*?</td>.*?<td.*?>(.*?)</td>', xml_text, re.DOTALL)
-            if end_match:
-                end_date = re.sub('<.*?>', '', end_match.group(2)).strip()
+        # 4. [NEW] 아파트 규모 (동수, 세대수) 추출
+        apt_info = []
+        # "개동" 추출 (예: 8개동, 8 개동)
+        dong_match = re.search(r'(\d+)\s*개?\s*동', xml_text)
+        if dong_match:
+            apt_info.append(f"{dong_match.group(1)}개동")
+            
+        # "세대" 추출 (예: 722세대, 1,000 세대)
+        sede_match = re.search(r'(\d{1,3}(?:,\d{3})*)\s*세대', xml_text)
+        if sede_match:
+            apt_info.append(f"{sede_match.group(1)}세대")
+            
+        apt_desc = ", ".join(apt_info) if apt_info else ""
 
-        return contract_name, contract_amt, amt_val, end_date
+        return contract_name, contract_amt, amt_val, end_date, apt_desc
     except:
-        return "-", "-", 0, "-"
+        return "-", "-", 0, "-", ""
 
 # ---------------------------------------------------------
 # [탭 1] 뉴스 모니터링
@@ -437,31 +476,27 @@ elif mode == "🏢 기업 공시 & 재무제표":
             if sc:
                 st.divider(); st.subheader(f"📈 {dn} 주가 차트")
                 
-                # [변경] 통합된 차트 옵션 (일봉/주봉/월봉 + 1개월~3년)
                 chart_opt = st.radio(
                     "차트 옵션",
                     ["일봉", "주봉", "월봉", "1개월", "3개월", "1년", "3년"],
                     horizontal=True,
-                    index=5 # 기본값: 1년
+                    index=5
                 )
                 
                 fig = None; l = 0; c = 0
 
-                # [로직 분기]
-                # 1. 캔들 차트 (일봉, 주봉, 월봉) - 고정 기간
                 if chart_opt in ["일봉", "주봉", "월봉"]:
                     if chart_opt == "일봉":
-                        days = 60 # 2개월
+                        days = 60 
                         interval = "일봉"
                     elif chart_opt == "주봉":
-                        days = 365 # 1년
+                        days = 365 
                         interval = "주봉"
-                    else: # 월봉
-                        days = 1095 # 3년
+                    else: 
+                        days = 1095 
                         interval = "월봉"
                     fig, l, c = plot_advanced_chart(sc, days, interval)
                 
-                # 2. 영역 차트 (1개월~3년) - 원래대로
                 else:
                     days_map = {"1개월": 30, "3개월": 90, "1년": 365, "3년": 1095}
                     days = days_map[chart_opt]
@@ -587,7 +622,8 @@ elif mode == "🏗️ 수주/계약 현황 (Lead)":
                     leads = leads.head(10)
                     
                     for i, r in leads.iterrows():
-                        c_name, c_amt, c_val, c_end = extract_contract_details(dart, r['rcept_no'])
+                        # [UPGRADE] 날짜 정밀 파싱 + 아파트 규모 추출
+                        c_name, c_amt, c_val, c_end, c_apt = extract_contract_details(dart, r['rcept_no'])
                         display_name = c_name if c_name != "-" else r['report_nm']
                         
                         all_leads.append({
@@ -596,6 +632,7 @@ elif mode == "🏗️ 수주/계약 현황 (Lead)":
                             "계약명 (현장)": display_name,
                             "계약금액": c_amt,
                             "준공예정일 (종료일)": c_end,
+                            "규모 (공사개요)": c_apt, # [NEW]
                             "금액(숫자)": c_val,
                             "공시제목": r['report_nm'],
                             "링크": f"http://dart.fss.or.kr/dsaf001/main.do?rcpNo={r['rcept_no']}"
@@ -633,6 +670,9 @@ elif mode == "🏗️ 수주/계약 현황 (Lead)":
                             st.markdown(f"**🏗️ 현장명:** {row['계약명 (현장)']}")
                             st.markdown(f"**💵 계약금액:** :red[**{row['계약금액']}**]")
                             st.markdown(f"**🗓️ 준공예정(종료일):** **{row['준공예정일 (종료일)']}**")
+                            # [NEW] 아파트 규모 표시
+                            if row['규모 (공사개요)']:
+                                st.markdown(f"**🏢 공사개요:** {row['규모 (공사개요)']}")
                             st.caption(f"공시제목: {row['공시제목']}")
                         with c2:
                             st.link_button("📄 원문 보기", row['링크'])
