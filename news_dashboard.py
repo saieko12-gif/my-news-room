@@ -59,7 +59,8 @@ try: st.sidebar.image("logo.png", use_column_width=True)
 except: pass
 
 st.sidebar.header("🛠️ 설정")
-mode = st.sidebar.radio("모드 선택", ["📰 뉴스 모니터링", "🏢 기업 공시 & 재무제표"])
+# [변경] 탭 추가: 수주/계약 현황
+mode = st.sidebar.radio("모드 선택", ["📰 뉴스 모니터링", "🏢 기업 공시 & 재무제표", "🏗️ 수주/계약 현황 (Lead)"])
 
 # ---------------------------------------------------------
 # 3. 공통 함수
@@ -114,7 +115,7 @@ def get_dart_system():
     except Exception as e:
         return None
 
-# [핵심] 재무제표 분석: 3단 콤보 분석 (실적/재무/전략)
+# 재무제표 분석 함수
 def get_financial_summary_advanced(dart, corp_name):
     years = [2025, 2024]
     codes = [('11011','사업보고서'), ('11014','3분기'), ('11012','반기'), ('11013','1분기')]
@@ -127,7 +128,6 @@ def get_financial_summary_advanced(dart, corp_name):
                 t_fs = fs[fs['fs_div']=='CFS']
                 if t_fs.empty: t_fs = fs[fs['fs_div']=='OFS']
                 
-                # 값 추출 함수
                 def gv(nms):
                     for nm in nms:
                         r = t_fs[t_fs['account_nm']==nm]
@@ -144,25 +144,19 @@ def get_financial_summary_advanced(dart, corp_name):
                             except: continue
                     return None, None, None, "-"
 
-                # 1. 손익계산서
                 sn_val, sd, sp_val, sn_str = gv(['매출액', '수익(매출액)'])
                 on_val, od, op_val, on_str = gv(['영업이익', '영업이익(손실)'])
                 nn_val, nd, np_val, nn_str = gv(['당기순이익', '당기순이익(손실)'])
                 
                 if sn_str == "-": continue
 
-                # 2. 재무상태표
                 assets_val, _, _, assets_str = gv(['자산총계'])
                 liab_val, _, _, liab_str = gv(['부채총계'])
                 equity_val, _, _, equity_str = gv(['자본총계'])
-                
                 curr_assets_val, _, _, _ = gv(['유동자산'])
                 curr_liab_val, _, _, _ = gv(['유동부채'])
-                
-                # 이익잉여금
                 ret_earn_val, _, _, ret_earn_str = gv(['이익잉여금', '미처분이익잉여금', '미처리결손금'])
 
-                # 비율 계산
                 opm = 0; debt_ratio = 0; curr_ratio = 0
                 if sn_val and sn_val != 0: opm = (on_val / sn_val) * 100
                 if equity_val and equity_val != 0: debt_ratio = (liab_val / equity_val) * 100
@@ -171,12 +165,7 @@ def get_financial_summary_advanced(dart, corp_name):
                 rev_growth = float(sd.replace('%', '')) if sd else 0
                 on_display = f"{on_str} ({opm:.1f}%)"
 
-                # ------------------------------------------------
-                # [NEW] 3단계 심층 분석 로직
-                # ------------------------------------------------
                 analysis_lines = []
-                
-                # 1. [실적 진단]
                 if rev_growth < -5 or opm < 2:
                     perf_msg = f"📉 **[실적]** 요새 경기가 얼어붙어가 매출({sd if sd else '0%'})이랑 이익이 쪼그라들었네. 불경기 직격탄 맞았다."
                 elif rev_growth > 5 and opm > 5:
@@ -187,7 +176,6 @@ def get_financial_summary_advanced(dart, corp_name):
                     perf_msg = f"📉 **[실적]** 매출이 {sd} 빠져서 성장이 정체됐네."
                 analysis_lines.append(perf_msg)
 
-                # 2. [재무 진단] (기초체력)
                 if debt_ratio < 100 and ret_earn_val and ret_earn_val > 0:
                     health_msg = f"💰 **[재무]** 근데 걱정 마라. 빚(부채비율 {debt_ratio:.0f}%)도 거의 없고, 곳간(잉여금 {ret_earn_str})이 꽉 차가 **기초체력은 국대급**이다."
                 elif debt_ratio > 200:
@@ -196,7 +184,6 @@ def get_financial_summary_advanced(dart, corp_name):
                     health_msg = f"💰 **[재무]** 부채비율 {debt_ratio:.0f}% 수준으로 재무 상태는 무난~하다."
                 analysis_lines.append(health_msg)
 
-                # 3. [영업 전략] (결론)
                 if (rev_growth < 0 or opm < 2) and (debt_ratio < 100):
                     strat_msg = "🚀 **[전략]** 당장 실적은 아쉬워도 맷집 좋은 우량 고객이다. **망할 걱정 말고 길게 보고 거래 터라!**"
                 elif debt_ratio > 200:
@@ -207,7 +194,6 @@ def get_financial_summary_advanced(dart, corp_name):
                     strat_msg = "✅ **[전략]** 크게 무리 없는 회사다. 꾸준히 관계 유지하모 되겠다."
                 analysis_lines.append(strat_msg)
 
-                # 리스트를 줄바꿈으로 합침
                 full_analysis = "\n\n".join(analysis_lines)
 
                 rn = ""
@@ -227,7 +213,7 @@ def get_financial_summary_advanced(dart, corp_name):
                     "부채비율": f"{debt_ratio:.1f}%",
                     "이익잉여금": ret_earn_str,
                     "유동비율": f"{curr_ratio:.1f}%",
-                    "분석내용": full_analysis, # 한줄평 -> 분석내용으로 변경
+                    "분석내용": full_analysis,
                     "link": rn
                 }
             except: continue
@@ -396,7 +382,7 @@ elif mode == "🏢 기업 공시 & 재무제표":
             if sm:
                 st.markdown(f"**📌 {sm['title']}** (전년 대비)")
                 
-                # [NEW] 3줄 심층 분석 출력 (st.info로 깔끔하게)
+                # 심층 분석 출력
                 st.info(f"💡 **[AI 영업맨 심층 분석]**\n\n{sm['분석내용']}")
                 
                 c1,c2,c3 = st.columns(3)
@@ -437,3 +423,83 @@ elif mode == "🏢 기업 공시 & 재무제표":
                         st.markdown("<hr style='margin: 3px 0; border-top: 1px solid #eee;'>", unsafe_allow_html=True)
             except: st.error("공시 로딩 실패")
 
+# ---------------------------------------------------------
+# [탭 3] 수주/계약 현황 (신규 기능)
+# ---------------------------------------------------------
+elif mode == "🏗️ 수주/계약 현황 (Lead)":
+    st.title("🏗️ 수주 & 계약 현황 (영업 Lead 발굴)")
+    st.markdown("건설사들이 따낸 **'따끈따끈한 공사 현장'**을 찾아서 자재 납품 영업 기회를 잡으소!")
+
+    dart = get_dart_system()
+    if dart is None: st.error("API 연결 실패")
+    else:
+        # 주요 건설사 프리셋 (이름, 종목코드)
+        constructors = {
+            "현대건설": "000720", "GS건설": "006360", "대우건설": "047040",
+            "DL이앤씨": "375500", "삼성물산": "028260", "현대엔지니어링": "386580", # 현대엔지니어링은 비상장이라 코드가 다를 수 있음(종목코드는 상장만 유효) -> 이름 검색 권장
+            "포스코이앤씨": "005490", "롯데건설": "000400" # 포스코(POSCO홀딩스 코드 등 주의), 비상장사는 이름으로 검색됨
+        }
+
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            target_corps = st.multiselect("분석할 건설사 선택 (직접 입력 가능)", 
+                                        list(constructors.keys()) + ["직접 입력"], 
+                                        default=["현대건설", "GS건설"])
+        
+        if "직접 입력" in target_corps:
+            custom_input = st.text_input("회사명 직접 입력 (쉼표로 구분)", placeholder="예: 신세계건설, 아이에스동서")
+            if custom_input:
+                custom_list = [c.strip() for c in custom_input.split(',')]
+                target_corps = [t for t in target_corps if t != "직접 입력"] + custom_list
+            else:
+                target_corps = [t for t in target_corps if t != "직접 입력"]
+
+        if st.button("🔍 수주 현장 조회"):
+            st.divider()
+            
+            # 검색 기간 (최근 6개월)
+            ed = datetime.now()
+            stt = ed - timedelta(days=180) 
+            
+            all_leads = []
+
+            with st.spinner('각 건설사 공시 털어오는 중...'):
+                for corp in target_corps:
+                    try:
+                        # 1. 공시 목록 조회
+                        rpts = dart.list(corp, start=stt.strftime('%Y-%m-%d'), end=ed.strftime('%Y-%m-%d'))
+                        if rpts is None or rpts.empty: continue
+                        
+                        # 2. 알짜 키워드 필터링 (단일판매, 공급계약, 수주, 신규시설투자)
+                        mask = rpts['report_nm'].str.contains("단일판매|공급계약|수주|신규시설투자")
+                        leads = rpts[mask]
+                        
+                        for i, r in leads.iterrows():
+                            all_leads.append({
+                                "날짜": r['rcept_dt'],
+                                "회사": corp,
+                                "공시제목": r['report_nm'],
+                                "제출인": r['flr_nm'],
+                                "링크": f"http://dart.fss.or.kr/dsaf001/main.do?rcpNo={r['rcept_no']}"
+                            })
+                    except: continue
+
+            if not all_leads:
+                st.info("최근 6개월간 수주/계약 공시가 없데이.")
+            else:
+                # 날짜순 정렬
+                df_leads = pd.DataFrame(all_leads)
+                df_leads = df_leads.sort_values(by="날짜", ascending=False)
+                
+                st.success(f"총 {len(df_leads)}건의 영업 기회(Lead) 발견!")
+                st.caption("💡 공시 제목을 클릭해서 **'계약금액'**과 **'계약기간'**을 확인하고 영업 들어가라!")
+
+                # 리스트 출력
+                for i, row in df_leads.iterrows():
+                    dt = row['날짜']
+                    fmt_dt = f"{dt[0:4]}-{dt[4:6]}-{dt[6:8]}"
+                    
+                    with st.expander(f"[{fmt_dt}] {row['회사']} - {row['공시제목']}"):
+                        st.markdown(f"**📄 제출인:** {row['제출인']}")
+                        st.markdown(f"**🔗 원문 링크:** [바로가기]({row['링크']})")
+                        st.info("👆 링크 눌러서 표 안에 있는 **[계약금액]**이랑 **[계약종료일]** 꼭 확인해라!")
