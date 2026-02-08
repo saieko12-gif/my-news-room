@@ -224,6 +224,20 @@ def get_financial_summary_advanced(dart, corp_name):
             except: continue
     return None
 
+# [변경] 기존 영역(Area) 차트 함수 - 기간(days)을 인자로 받도록 수정
+def get_stock_chart(target, code, days):
+    try:
+        df = fdr.DataReader(code, datetime.now()-timedelta(days=days), datetime.now())
+        if df.empty: return None
+        l = df['Close'].iloc[-1]; p = df['Close'].iloc[-2]; c = ((l-p)/p)*100
+        clr = '#ff4b4b' if c>0 else '#4b4bff'
+        fig = px.area(df, x=df.index, y='Close')
+        fig.update_layout(xaxis_title="", yaxis_title="", height=350, margin=dict(t=20,b=20,l=20,r=20), showlegend=False)
+        fig.update_traces(line_color=clr)
+        return fig, l, c
+    except: return None
+
+# [변경] 캔들(봉) 차트 함수
 def plot_advanced_chart(code, days, interval):
     try:
         start_date = datetime.now() - timedelta(days=days)
@@ -297,7 +311,7 @@ def extract_contract_details(dart, rcp_no):
         return "-", "-", 0, "-"
 
 # ---------------------------------------------------------
-# [탭 1] 뉴스 모니터링 (옵션 UI 변경)
+# [탭 1] 뉴스 모니터링
 # ---------------------------------------------------------
 if mode == "📰 뉴스 모니터링":
     st.title("💼 B2B 영업 인텔리전스")
@@ -323,12 +337,9 @@ if mode == "📰 뉴스 모니터링":
         if st.button("📈 건설경기/통계"): st.session_state['search_keywords'] = preset_trend
         if st.button("🏛️ 정부 정책/규제"): st.session_state['search_keywords'] = preset_policy
     
-    # [변경] 텍스트 입력창 높이 확대 (100 -> 250)
     user_input = st.sidebar.text_area("검색 키워드 (쉼표로 구분)", key='search_keywords', height=250)
     keywords = [k.strip() for k in user_input.split(',') if k.strip()]
     
-    # [변경] 기간 선택: selectbox -> radio (클릭만 가능, 텍스트 수정 불가)
-    # [변경] 기본값: index 2 ("최근 1주일")
     period = st.sidebar.radio(
         "기간 선택", 
         ["최근 24시간", "최근 3일", "최근 1주일", "최근 1개월", "최근 3개월", "전체 보기"], 
@@ -374,7 +385,7 @@ if mode == "📰 뉴스 모니터링":
                 st.link_button("원문 보기", n['link'])
 
 # ---------------------------------------------------------
-# [탭 2] 기업 공시 & 재무제표
+# [탭 2] 기업 공시 & 재무제표 (차트 옵션 통합)
 # ---------------------------------------------------------
 elif mode == "🏢 기업 공시 & 재무제표":
     st.title("🏢 기업 분석 (상장사 + 신탁사)")
@@ -426,21 +437,39 @@ elif mode == "🏢 기업 공시 & 재무제표":
             if sc:
                 st.divider(); st.subheader(f"📈 {dn} 주가 차트")
                 
-                col_p, col_i = st.columns(2)
-                with col_p:
-                    period_sel = st.radio("기간", ["1개월", "3개월", "1년", "3년"], horizontal=True, index=2)
-                with col_i:
-                    interval_sel = st.radio("봉", ["일봉", "주봉", "월봉"], horizontal=True, index=0)
+                # [변경] 통합된 차트 옵션 (일봉/주봉/월봉 + 1개월~3년)
+                chart_opt = st.radio(
+                    "차트 옵션",
+                    ["일봉", "주봉", "월봉", "1개월", "3개월", "1년", "3년"],
+                    horizontal=True,
+                    index=5 # 기본값: 1년
+                )
                 
-                days_map = {"1개월": 30, "3개월": 90, "1년": 365, "3년": 1095}
-                days = days_map[period_sel]
+                fig = None; l = 0; c = 0
+
+                # [로직 분기]
+                # 1. 캔들 차트 (일봉, 주봉, 월봉) - 고정 기간
+                if chart_opt in ["일봉", "주봉", "월봉"]:
+                    if chart_opt == "일봉":
+                        days = 60 # 2개월
+                        interval = "일봉"
+                    elif chart_opt == "주봉":
+                        days = 365 # 1년
+                        interval = "주봉"
+                    else: # 월봉
+                        days = 1095 # 3년
+                        interval = "월봉"
+                    fig, l, c = plot_advanced_chart(sc, days, interval)
                 
-                f, l, c = plot_advanced_chart(sc, days, interval_sel)
-                
-                if f:
-                    clr = "red" if c > 0 else "blue"
+                # 2. 영역 차트 (1개월~3년) - 원래대로
+                else:
+                    days_map = {"1개월": 30, "3개월": 90, "1년": 365, "3년": 1095}
+                    days = days_map[chart_opt]
+                    fig, l, c = get_stock_chart(dn, sc, days)
+
+                if fig:
                     st.metric("현재가", f"{l:,}원", f"{c:.2f}%")
-                    st.plotly_chart(f, use_container_width=True)
+                    st.plotly_chart(fig, use_container_width=True)
                 else: st.info("주가 정보 없음")
             else: st.divider(); st.info(f"📌 {dn} (비상장/기타법인)")
 
