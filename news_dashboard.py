@@ -224,31 +224,27 @@ def get_financial_summary_advanced(dart, corp_name):
             except: continue
     return None
 
-# [NEW] 고급 차트 함수 (캔들, 기간, 주봉/월봉)
 def plot_advanced_chart(code, days, interval):
     try:
-        # 데이터 기간 계산
         start_date = datetime.now() - timedelta(days=days)
         df = fdr.DataReader(code, start_date, datetime.now())
         
         if df.empty: return None
 
-        # 주봉/월봉 리샘플링
         if interval == '주봉':
             df = df.resample('W').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last', 'Volume':'sum'})
         elif interval == '월봉':
             df = df.resample('ME').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last', 'Volume':'sum'})
         
-        # 캔들 차트 그리기 (한국식: 상승=빨강, 하락=파랑)
         fig = go.Figure(data=[go.Candlestick(x=df.index,
                         open=df['Open'], high=df['High'],
                         low=df['Low'], close=df['Close'],
-                        increasing_line_color='#ff3b30', # 빨강
-                        decreasing_line_color='#007aff'  # 파랑
+                        increasing_line_color='#ff3b30',
+                        decreasing_line_color='#007aff'
                         )])
 
         fig.update_layout(
-            xaxis_rangeslider_visible=False, # 하단 슬라이더 제거
+            xaxis_rangeslider_visible=False,
             height=350,
             margin=dict(t=20,b=20,l=20,r=20),
             yaxis_title="주가 (원)",
@@ -301,7 +297,7 @@ def extract_contract_details(dart, rcp_no):
         return "-", "-", 0, "-"
 
 # ---------------------------------------------------------
-# [탭 1] 뉴스 모니터링
+# [탭 1] 뉴스 모니터링 (옵션 UI 변경)
 # ---------------------------------------------------------
 if mode == "📰 뉴스 모니터링":
     st.title("💼 B2B 영업 인텔리전스")
@@ -327,10 +323,17 @@ if mode == "📰 뉴스 모니터링":
         if st.button("📈 건설경기/통계"): st.session_state['search_keywords'] = preset_trend
         if st.button("🏛️ 정부 정책/규제"): st.session_state['search_keywords'] = preset_policy
     
-    user_input = st.sidebar.text_area("검색 키워드 (쉼표로 구분)", key='search_keywords', height=100)
+    # [변경] 텍스트 입력창 높이 확대 (100 -> 250)
+    user_input = st.sidebar.text_area("검색 키워드 (쉼표로 구분)", key='search_keywords', height=250)
     keywords = [k.strip() for k in user_input.split(',') if k.strip()]
     
-    period = st.sidebar.selectbox("기간", ["전체 보기", "최근 24시간", "최근 3일", "최근 1주일", "최근 1개월", "최근 3개월"])
+    # [변경] 기간 선택: selectbox -> radio (클릭만 가능, 텍스트 수정 불가)
+    # [변경] 기본값: index 2 ("최근 1주일")
+    period = st.sidebar.radio(
+        "기간 선택", 
+        ["최근 24시간", "최근 3일", "최근 1주일", "최근 1개월", "최근 3개월", "전체 보기"], 
+        index=2
+    )
     
     if st.button("🔄 뉴스 새로고침"): st.cache_data.clear()
 
@@ -371,7 +374,7 @@ if mode == "📰 뉴스 모니터링":
                 st.link_button("원문 보기", n['link'])
 
 # ---------------------------------------------------------
-# [탭 2] 기업 공시 & 재무제표 (UI 대폭 개편)
+# [탭 2] 기업 공시 & 재무제표
 # ---------------------------------------------------------
 elif mode == "🏢 기업 공시 & 재무제표":
     st.title("🏢 기업 분석 (상장사 + 신탁사)")
@@ -423,18 +426,15 @@ elif mode == "🏢 기업 공시 & 재무제표":
             if sc:
                 st.divider(); st.subheader(f"📈 {dn} 주가 차트")
                 
-                # [NEW] 차트 컨트롤 (기간, 봉 종류)
                 col_p, col_i = st.columns(2)
                 with col_p:
                     period_sel = st.radio("기간", ["1개월", "3개월", "1년", "3년"], horizontal=True, index=2)
                 with col_i:
                     interval_sel = st.radio("봉", ["일봉", "주봉", "월봉"], horizontal=True, index=0)
                 
-                # 기간 매핑
                 days_map = {"1개월": 30, "3개월": 90, "1년": 365, "3년": 1095}
                 days = days_map[period_sel]
                 
-                # 차트 그리기
                 f, l, c = plot_advanced_chart(sc, days, interval_sel)
                 
                 if f:
@@ -447,13 +447,9 @@ elif mode == "🏢 기업 공시 & 재무제표":
             st.divider(); st.subheader("💰 재무 성적표")
             sm = get_financial_summary_advanced(dart, tgt)
             if sm:
-                # [배치 변경] 1. AI 분석을 가장 위로
                 st.info(f"💡 **[AI 영업맨 심층 분석]**\n\n{sm['분석내용']}")
-                
-                # [배치 변경] 2. 날짜 기준 강조
                 st.markdown(f'<div class="date-badge">📅 기준: {sm["title"]} (전년 동기 대비)</div>', unsafe_allow_html=True)
                 
-                # [배치 변경] 3. 재무 데이터
                 c1,c2,c3 = st.columns(3)
                 c1.metric("매출(누적)", sm['매출'][0], sm['매출'][1]); c1.caption(f"작년: {sm['매출'][2]}")
                 c2.metric("영업이익 (이익률)", sm['영업'][0], sm['영업'][1]); c2.caption(f"작년: {sm['영업'][2]}") 
