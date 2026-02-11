@@ -40,11 +40,10 @@ st.markdown("""
             white-space: normal !important; 
         }
         
-        /* 날짜 강조 스타일 */
         .date-badge {
             font-size: 1.2rem;
             font-weight: bold;
-            color: #d32f2f; /* 빨간색 */
+            color: #d32f2f; 
             background-color: #ffebee;
             padding: 5px 10px;
             border-radius: 5px;
@@ -67,7 +66,10 @@ try: st.sidebar.image("logo.png", use_column_width=True)
 except: pass
 
 st.sidebar.header("🛠️ 설정")
-mode = st.sidebar.radio("모드 선택", ["📰 뉴스 모니터링", "🏢 기업 공시 & 재무제표", "🏗️ 수주/계약 현황 (Lead)"])
+# [변경] 탭 4개로 확장
+mode = st.sidebar.radio("모드 선택", 
+    ["📰 뉴스 모니터링", "🏢 기업 공시 & 재무제표", "🏗️ 수주/계약 현황 (Lead)", "🏛️ 신탁/시행사 발굴 (Early Bird)"]
+)
 
 # ---------------------------------------------------------
 # 3. 공통 함수
@@ -122,7 +124,7 @@ def get_dart_system():
     except Exception as e:
         return None
 
-# 재무제표 분석 함수
+# 재무제표
 def get_financial_summary_advanced(dart, corp_name):
     years = [2025, 2024]
     codes = [('11011','사업보고서'), ('11014','3분기'), ('11012','반기'), ('11013','1분기')]
@@ -225,168 +227,111 @@ def get_financial_summary_advanced(dart, corp_name):
             except: continue
     return None
 
-# 영역 차트 (1개월~3년) - Y축 스케일링 & 높이 축소
+# 차트 함수
 def get_stock_chart(target, code, days):
     try:
         df = fdr.DataReader(code, datetime.now()-timedelta(days=days), datetime.now())
         if df.empty: return None
         l = df['Close'].iloc[-1]; p = df['Close'].iloc[-2]; c = ((l-p)/p)*100
         clr = '#ff4b4b' if c>0 else '#4b4bff'
-        
-        # Y축 범위 동적 계산
-        min_p = df['Close'].min()
-        max_p = df['Close'].max()
+        min_p = df['Close'].min(); max_p = df['Close'].max()
         margin = (max_p - min_p) * 0.1
         if margin == 0: margin = min_p * 0.05
-
         fig = px.area(df, x=df.index, y='Close')
-        
-        fig.update_layout(
-            xaxis_title="", 
-            yaxis_title="", 
-            height=250, # 높이 축소
-            margin=dict(t=10,b=10,l=10,r=10), 
-            showlegend=False,
-            yaxis_range=[min_p - margin, max_p + margin]
-        )
+        fig.update_layout(xaxis_title="", yaxis_title="", height=250, margin=dict(t=10,b=10,l=10,r=10), showlegend=False, yaxis_range=[min_p - margin, max_p + margin])
         fig.update_traces(line_color=clr)
         return fig, l, c
     except: return None
 
-# 캔들 차트 (일봉/주봉/월봉)
 def plot_advanced_chart(code, days, interval):
     try:
         start_date = datetime.now() - timedelta(days=days)
         df = fdr.DataReader(code, start_date, datetime.now())
-        
         if df.empty: return None
-
-        if interval == '주봉':
-            df = df.resample('W').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last', 'Volume':'sum'})
-        elif interval == '월봉':
-            df = df.resample('ME').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last', 'Volume':'sum'})
-        
-        fig = go.Figure(data=[go.Candlestick(x=df.index,
-                        open=df['Open'], high=df['High'],
-                        low=df['Low'], close=df['Close'],
-                        increasing_line_color='#ff3b30',
-                        decreasing_line_color='#007aff'
-                        )])
-
-        fig.update_layout(
-            xaxis_rangeslider_visible=False,
-            height=250, # 높이 축소
-            margin=dict(t=10,b=10,l=10,r=10),
-            yaxis_title="주가 (원)",
-            showlegend=False
-        )
-        
-        last_val = df['Close'].iloc[-1]
-        prev_val = df['Close'].iloc[-2]
-        chg = ((last_val - prev_val) / prev_val) * 100
-        
+        if interval == '주봉': df = df.resample('W').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last', 'Volume':'sum'})
+        elif interval == '월봉': df = df.resample('ME').agg({'Open':'first', 'High':'max', 'Low':'min', 'Close':'last', 'Volume':'sum'})
+        fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], increasing_line_color='#ff3b30', decreasing_line_color='#007aff')])
+        fig.update_layout(xaxis_rangeslider_visible=False, height=250, margin=dict(t=10,b=10,l=10,r=10), yaxis_title="주가 (원)", showlegend=False)
+        last_val = df['Close'].iloc[-1]; prev_val = df['Close'].iloc[-2]; chg = ((last_val - prev_val) / prev_val) * 100
         return fig, last_val, chg
-    except Exception as e:
-        return None, 0, 0
+    except Exception as e: return None, 0, 0
 
-# [초강력 업그레이드] 표 구조 인식 파싱 + 아파트 규모 추출
+# 수주현장 파싱
 def extract_contract_details(dart, rcp_no):
-    contract_name = "-"
-    contract_amt = "-"
-    amt_val = 0
-    end_date = "-"
-    apt_desc = ""
-
+    contract_name = "-"; contract_amt = "-"; amt_val = 0; end_date = "-"; apt_desc = ""
     try:
-        # 1. 텍스트 추출 (Regex용 - 아파트 규모 등)
         xml_text = dart.document(rcp_no)
-        
-        # --- 아파트 규모 (동수, 세대수) 추출 (Regex가 유리) ---
         apt_info = []
-        # '공사개요' 주변이나 문서 전체에서 패턴 찾기
         dong_match = re.search(r'(\d+)\s*개?\s*동', xml_text)
         if dong_match: apt_info.append(f"{dong_match.group(1)}개동")
-        
         sede_match = re.search(r'(\d{1,3}(?:,\d{3})*)\s*세대', xml_text)
         if sede_match: apt_info.append(f"{sede_match.group(1)}세대")
-        
         apt_desc = ", ".join(apt_info)
 
-        # 2. 표(Table) 파싱 (pandas 사용 - 기재정정 대응)
-        try:
-            dfs = pd.read_html(io.StringIO(xml_text))
-        except:
-            dfs = [] # 표 파싱 실패시 regex fallback
+        try: dfs = pd.read_html(io.StringIO(xml_text))
+        except: dfs = []
 
-        found_amt = False
-        found_date = False
-
+        found_amt = False; found_date = False
         for df in dfs:
-            # 데이터프레임 전처리 (NaN 처리)
             df = df.fillna("")
-            
-            # 각 행을 순회하며 키워드 찾기
             for idx, row in df.iterrows():
                 row_str = " ".join(map(str, row.values))
-                
-                # (1) 계약명 찾기
                 if not contract_name or contract_name == "-":
                     if "계약명" in row_str or "공사명" in row_str:
-                        # 보통 값은 마지막 열(Column)에 있음 (정정후)
                         val = str(row.iloc[-1]).strip()
                         if val and val != "nan": contract_name = val
-
-                # (2) 계약금액 찾기
                 if not found_amt:
                     if "계약금액" in row_str or "확정계약금액" in row_str:
-                        # 마지막 열의 값 가져오기 (정정후 금액)
                         raw_val = str(row.iloc[-1])
-                        # 숫자만 추출
                         nums = re.findall(r'\d+', raw_val.replace(',',''))
                         if nums:
                             total_str = "".join(nums)
-                            if len(total_str) > 8: # 1억 이상일 때만 (오인식 방지)
-                                amt_val = int(total_str)
-                                contract_amt = f"{amt_val / 100000000:,.1f} 억"
-                                found_amt = True
-
-                # (3) 계약기간(종료일) 찾기
+                            if len(total_str) > 8:
+                                amt_val = int(total_str); contract_amt = f"{amt_val / 100000000:,.1f} 억"; found_amt = True
                 if not found_date:
                     if "계약기간" in row_str or "종료일" in row_str or "공사기간" in row_str:
-                        # 마지막 열의 값 가져오기 (정정후 기간)
                         raw_val = str(row.iloc[-1])
-                        # 날짜 패턴 추출 (YYYY-MM-DD or YYYY.MM.DD)
                         dates = re.findall(r'20\d{2}[-.]\d{2}[-.]\d{2}', raw_val)
-                        if dates:
-                            dates.sort() # 오름차순 정렬
-                            end_date = dates[-1] # 가장 늦은 날짜 = 종료일
-                            found_date = True
-
-        # 표 파싱으로 못 찾았을 경우 기존 Regex Fallback
+                        if dates: dates.sort(); end_date = dates[-1]; found_date = True
+        
         if contract_amt == "-":
             amt_match = re.search(r'(계약금액|확정계약금액).*?</td>.*?<td.*?>(.*?)</td>', xml_text, re.DOTALL)
             if amt_match:
                 raw_amt_clean = re.sub('<.*?>', '', amt_match.group(2)).replace(',','').strip()
                 nums = re.findall(r'\d+', raw_amt_clean)
-                if nums:
-                    amt_val = int("".join(nums))
-                    contract_amt = f"{amt_val / 100000000:,.1f} 억"
-
+                if nums: amt_val = int("".join(nums)); contract_amt = f"{amt_val / 100000000:,.1f} 억"
         if end_date == "-":
-             # Regex로 다시 시도
             period_rows = re.findall(r'(계약기간|종료일|공사기간).*?</tr>', xml_text, re.DOTALL)
             found_dates = []
             for row in period_rows:
                 dates = re.findall(r'20\d{2}[-.]\d{2}[-.]\d{2}', row)
                 found_dates.extend(dates)
-            if found_dates:
-                found_dates.sort()
-                end_date = found_dates[-1]
-
-    except Exception as e:
-        return "-", "-", 0, "-", ""
-
+            if found_dates: found_dates.sort(); end_date = found_dates[-1]
+    except Exception as e: return "-", "-", 0, "-", ""
     return contract_name, contract_amt, amt_val, end_date, apt_desc
+
+# [NEW] 신탁사 파싱 전용 함수
+def extract_trust_details(dart, rcp_no):
+    project_name = "-"; location = "-"
+    try:
+        xml_text = dart.document(rcp_no)
+        # 1. 사업명/현장명 추출
+        proj_match = re.search(r'(사업명|신탁명칭|현장명).*?</td>.*?<td.*?>(.*?)</td>', xml_text, re.DOTALL)
+        if proj_match:
+            project_name = re.sub('<.*?>', '', proj_match.group(2)).strip()
+        else:
+            # 사업명이 표에 없을 경우 텍스트에서 검색
+            text_match = re.search(r'사업명\s*:\s*(.*?)(<br|\n)', xml_text)
+            if text_match: project_name = re.sub('<.*?>', '', text_match.group(1)).strip()
+
+        # 2. 소재지/위치 추출
+        loc_match = re.search(r'(소재지|위치|대지위치).*?</td>.*?<td.*?>(.*?)</td>', xml_text, re.DOTALL)
+        if loc_match:
+            location = re.sub('<.*?>', '', loc_match.group(2)).strip()[:30] + "..." # 너무 길면 자름
+
+        return project_name, location
+    except:
+        return "-", "-"
 
 # ---------------------------------------------------------
 # [탭 1] 뉴스 모니터링
@@ -418,11 +363,7 @@ if mode == "📰 뉴스 모니터링":
     user_input = st.sidebar.text_area("검색 키워드 (쉼표로 구분)", key='search_keywords', height=250)
     keywords = [k.strip() for k in user_input.split(',') if k.strip()]
     
-    period = st.sidebar.radio(
-        "기간 선택", 
-        ["최근 24시간", "최근 3일", "최근 1주일", "최근 1개월", "최근 3개월", "전체 보기"], 
-        index=2
-    )
+    period = st.sidebar.radio("기간 선택", ["최근 24시간", "최근 3일", "최근 1주일", "최근 1개월", "최근 3개월", "전체 보기"], index=2)
     
     if st.button("🔄 뉴스 새로고침"): st.cache_data.clear()
 
@@ -463,7 +404,7 @@ if mode == "📰 뉴스 모니터링":
                 st.link_button("원문 보기", n['link'])
 
 # ---------------------------------------------------------
-# [탭 2] 기업 공시 & 재무제표 (차트 옵션 통합)
+# [탭 2] 기업 공시 & 재무제표
 # ---------------------------------------------------------
 elif mode == "🏢 기업 공시 & 재무제표":
     st.title("🏢 기업 분석 (상장사 + 신탁사)")
@@ -481,25 +422,19 @@ elif mode == "🏢 기업 공시 & 재무제표":
                 try:
                     cdf = dart.corp_codes
                     matches = cdf[cdf['corp_name'].str.contains(search_txt, na=False)]
-                    
                     if not matches.empty:
                         matches['is_listed'] = matches['stock_code'].apply(lambda x: 0 if x and str(x).strip() != '' else 1)
                         matches = matches.sort_values(by='is_listed')
-                        
                         def format_name(row):
                             code = row['stock_code']
                             if code and str(code).strip(): return f"{row['corp_name']} ({code})"
                             else: return f"{row['corp_name']} (기타법인)"
-                        
                         matches['display_name'] = matches.apply(format_name, axis=1)
-                        
                         sl = matches['display_name'].tolist()[:50]
                         sn = st.selectbox(f"검색 결과 ({len(matches)}개)", sl)
-                        
                         selected_row = matches[matches['display_name'] == sn].iloc[0]
                         final_corp = selected_row['corp_code']
                         stock_code = selected_row['stock_code'] if selected_row['stock_code'] and str(selected_row['stock_code']).strip() else None
-                        
                         st.session_state['dn'] = selected_row['corp_name']
                     else:
                         st.warning("목록에 없음")
@@ -511,39 +446,20 @@ elif mode == "🏢 기업 공시 & 재무제표":
 
         if st.session_state.get('act'):
             tgt = st.session_state.get('cp'); sc = st.session_state.get('sc'); dn = st.session_state.get('dn', tgt)
-            
             if sc:
                 st.divider(); st.subheader(f"📈 {dn} 주가 차트")
-                
-                chart_opt = st.radio(
-                    "차트 옵션",
-                    ["일봉", "주봉", "월봉", "1개월", "3개월", "1년", "3년"],
-                    horizontal=True,
-                    index=5
-                )
-                
+                chart_opt = st.radio("차트 옵션", ["일봉", "주봉", "월봉", "1개월", "3개월", "1년", "3년"], horizontal=True, index=5)
                 fig = None; l = 0; c = 0
-
                 if chart_opt in ["일봉", "주봉", "월봉"]:
-                    if chart_opt == "일봉":
-                        days = 60 
-                        interval = "일봉"
-                    elif chart_opt == "주봉":
-                        days = 365 
-                        interval = "주봉"
-                    else: 
-                        days = 1095 
-                        interval = "월봉"
+                    if chart_opt == "일봉": days = 60; interval = "일봉"
+                    elif chart_opt == "주봉": days = 365; interval = "주봉"
+                    else: days = 1095; interval = "월봉"
                     fig, l, c = plot_advanced_chart(sc, days, interval)
-                
                 else:
                     days_map = {"1개월": 30, "3개월": 90, "1년": 365, "3년": 1095}
                     days = days_map[chart_opt]
                     fig, l, c = get_stock_chart(dn, sc, days)
-
-                if fig:
-                    st.metric("현재가", f"{l:,}원", f"{c:.2f}%")
-                    st.plotly_chart(fig, use_container_width=True)
+                if fig: st.metric("현재가", f"{l:,}원", f"{c:.2f}%"); st.plotly_chart(fig, use_container_width=True)
                 else: st.info("주가 정보 없음")
             else: st.divider(); st.info(f"📌 {dn} (비상장/기타법인)")
 
@@ -552,18 +468,13 @@ elif mode == "🏢 기업 공시 & 재무제표":
             if sm:
                 st.info(f"💡 **[AI 영업맨 심층 분석]**\n\n{sm['분석내용']}")
                 st.markdown(f'<div class="date-badge">📅 기준: {sm["title"]} (전년 동기 대비)</div>', unsafe_allow_html=True)
-                
                 c1,c2,c3 = st.columns(3)
                 c1.metric("매출(누적)", sm['매출'][0], sm['매출'][1]); c1.caption(f"작년: {sm['매출'][2]}")
                 c2.metric("영업이익 (이익률)", sm['영업'][0], sm['영업'][1]); c2.caption(f"작년: {sm['영업'][2]}") 
                 c3.metric("순이익", sm['순익'][0], sm['순익'][1]); c3.caption(f"작년: {sm['순익'][2]}")
-                
                 st.markdown("---")
                 k1, k2, k3 = st.columns(3)
-                k1.metric("이익잉여금 (비상금)", sm['이익잉여금'], help="회사가 쌓아둔 현금성 자본 (많을수록 안전)")
-                k2.metric("유동비율 (지급능력)", sm['유동비율'], help="100% 이상이면 단기 부채 상환 능력 양호")
-                k3.metric("부채비율 (안정성)", sm['부채비율'], help="200% 이하면 양호")
-                
+                k1.metric("이익잉여금 (비상금)", sm['이익잉여금'], help="회사가 쌓아둔 현금성 자본"); k2.metric("유동비율 (지급능력)", sm['유동비율'], help="100% 이상이면 양호"); k3.metric("부채비율 (안정성)", sm['부채비율'], help="200% 이하면 양호")
                 if sm['link']: st.link_button("📄 원문 보고서", f"http://dart.fss.or.kr/dsaf001/main.do?rcpNo={sm['link']}")
             else: st.warning("재무 데이터 없음")
 
@@ -576,18 +487,12 @@ elif mode == "🏢 기업 공시 & 재무제표":
                     fq = st.text_input("🔍 결과 내 검색", placeholder="신탁, 수주, 계약...")
                     if fq: rpts = rpts[rpts['report_nm'].str.contains(fq)]
                     st.success(f"{len(rpts)}건 발견")
-                    
-                    if "신탁" in dn or "자산" in dn:
-                        st.info("💡 **Tip:** 신탁사는 **'신탁계약'**이나 **'공사도급계약'**을 검색하면 현장 정보가 나온데이!")
-
+                    if "신탁" in dn or "자산" in dn: st.info("💡 **Tip:** 신탁사는 **'신탁계약'**이나 **'공사도급계약'**을 검색하면 현장 정보가 나온데이!")
                     h1, h2 = st.columns([1.5, 8.5]); h1.markdown("**날짜**"); h2.markdown("**제목 (제출인)**"); st.markdown("---")
                     for i, r in rpts.iterrows():
                         dt = r['rcept_dt']; fd = f"{dt[2:4]}/{dt[4:6]}/{dt[6:]}"
                         lk = f"http://dart.fss.or.kr/dsaf001/main.do?rcpNo={r['rcept_no']}"
-                        c1, c2 = st.columns([1.5, 8.5])
-                        c1.text(fd)
-                        c2.markdown(f"[{r['report_nm']}]({lk}) <span style='color:grey; font-size:0.8em'>({r['flr_nm']})</span>", unsafe_allow_html=True)
-                        st.markdown("<hr style='margin: 3px 0; border-top: 1px solid #eee;'>", unsafe_allow_html=True)
+                        c1, c2 = st.columns([1.5, 8.5]); c1.text(fd); c2.markdown(f"[{r['report_nm']}]({lk}) <span style='color:grey; font-size:0.8em'>({r['flr_nm']})</span>", unsafe_allow_html=True); st.markdown("<hr style='margin: 3px 0; border-top: 1px solid #eee;'>", unsafe_allow_html=True)
             except: st.error("공시 로딩 실패")
 
 # ---------------------------------------------------------
@@ -606,112 +511,133 @@ elif mode == "🏗️ 수주/계약 현황 (Lead)":
             "7위 포스코이앤씨": "포스코이앤씨", "8위 롯데건설": "롯데건설", "9위 SK에코플랜트": "SK에코플랜트",
             "10위 HDC현대산업개발": "294870"
         }
-        
         col1, col2 = st.columns([3, 1])
         with col1:
             st.markdown("##### 👷 분석할 건설사 선택")
-            target_corps_keys = st.multiselect(
-                "체크박스에서 건설사를 선택하소 (기본: 전체 선택)",
-                options=list(constructors.keys()),
-                default=list(constructors.keys())
-            )
-        
+            target_corps_keys = st.multiselect("체크박스에서 건설사를 선택하소 (기본: 전체 선택)", options=list(constructors.keys()), default=list(constructors.keys()))
         with col2:
             st.markdown("##### 📅 검색 기간")
             date_opt = st.radio("기간 선택", ["최근 1년", "전체 기간(3년)"])
-            
         with st.expander("➕ 다른 회사 직접 검색하기 (직접 입력)"):
             custom_input = st.text_input("회사명 입력 (쉼표로 구분)", placeholder="예: 태영건설, 코오롱글로벌")
         
         final_targets = {}
-        for k in target_corps_keys:
-            final_targets[k] = constructors[k]
-            
+        for k in target_corps_keys: final_targets[k] = constructors[k]
         if custom_input:
-            for c in custom_input.split(','):
-                name = c.strip()
-                if name: final_targets[name] = name
+            for c in custom_input.split(','): name = c.strip(); 
+            if name: final_targets[name] = name
 
         if st.button("🔍 수주 현장 정밀 분석"):
-            st.divider()
-            
-            ed = datetime.now()
-            days_back = 365 if date_opt == "최근 1년" else 1095
-            stt = ed - timedelta(days=days_back)
-            
-            all_leads = []
-            
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            total_targets = len(final_targets)
-            current_idx = 0
+            st.divider(); ed = datetime.now(); days_back = 365 if date_opt == "최근 1년" else 1095; stt = ed - timedelta(days=days_back); all_leads = []
+            progress_bar = st.progress(0); status_text = st.empty(); total_targets = len(final_targets); current_idx = 0
 
             for name, code in final_targets.items():
-                current_idx += 1
-                status_text.text(f"🚧 {name} 공시 털어오는 중... ({current_idx}/{total_targets})")
-                progress_bar.progress(current_idx / total_targets)
-                
+                current_idx += 1; status_text.text(f"🚧 {name} 공시 털어오는 중... ({current_idx}/{total_targets})"); progress_bar.progress(current_idx / total_targets)
                 try:
                     rpts = dart.list(code, start=stt.strftime('%Y-%m-%d'), end=ed.strftime('%Y-%m-%d'))
                     if rpts is None or rpts.empty: continue
-                    
                     mask = rpts['report_nm'].str.contains("단일판매|공급계약|수주")
-                    leads = rpts[mask]
-                    leads = leads.head(10)
-                    
+                    leads = rpts[mask]; leads = leads.head(10)
                     for i, r in leads.iterrows():
-                        # [UPGRADE] 표(Table) 단위 파싱 + 아파트 규모
                         c_name, c_amt, c_val, c_end, c_apt = extract_contract_details(dart, r['rcept_no'])
                         display_name = c_name if c_name != "-" else r['report_nm']
-                        
-                        all_leads.append({
+                        all_leads.append({"날짜": r['rcept_dt'], "건설사": name.split(' ')[1] if '위' in name else name, "계약명 (현장)": display_name, "계약금액": c_amt, "준공예정일 (종료일)": c_end, "규모 (공사개요)": c_apt, "금액(숫자)": c_val, "공시제목": r['report_nm'], "링크": f"http://dart.fss.or.kr/dsaf001/main.do?rcpNo={r['rcept_no']}"})
+                except: continue
+            
+            progress_bar.empty(); status_text.empty()
+            if not all_leads: st.warning("조건에 맞는 수주 공시가 없데이.")
+            else:
+                df = pd.DataFrame(all_leads); df = df.sort_values(by="날짜", ascending=False)
+                c1, c2 = st.columns([8, 2]); c1.success(f"총 {len(df)}건의 알짜배기 현장 발견! (최근 순)")
+                with c2: csv = df.to_csv(index=False).encode('utf-8-sig'); st.download_button(label="💾 엑셀(CSV) 다운로드", data=csv, file_name='construction_leads.csv', mime='text/csv')
+                for i, row in df.iterrows():
+                    dt = row['날짜']; fmt_dt = f"{dt[0:4]}-{dt[4:6]}-{dt[6:8]}"
+                    with st.expander(f"[{fmt_dt}] {row['건설사']} - {row['계약명 (현장)']}"):
+                        c1, c2 = st.columns([3, 1]); 
+                        with c1: st.markdown(f"**🏗️ 현장명:** {row['계약명 (현장)']}"); st.markdown(f"**💵 계약금액:** :red[**{row['계약금액']}**]"); st.markdown(f"**🗓️ 준공예정(종료일):** **{row['준공예정일 (종료일)']}**"); 
+                        if row['규모 (공사개요)']: st.markdown(f"**🏢 공사개요:** {row['규모 (공사개요)']}")
+                        st.caption(f"공시제목: {row['공시제목']}")
+                        with c2: st.link_button("📄 원문 보기", row['링크'])
+
+# ---------------------------------------------------------
+# [탭 4] 신탁/시행사 발굴 (신규)
+# ---------------------------------------------------------
+elif mode == "🏛️ 신탁/시행사 발굴 (Early Bird)":
+    st.title("🏛️ 신탁사/시행사 발굴 (초기 영업용)")
+    st.markdown("건설사보다 한 발 빠르게! **'진짜 주인(건축주)'**이 벌이는 사업을 찾아라.")
+    
+    dart = get_dart_system()
+    if dart is None: st.error("API 연결 실패")
+    else:
+        # [NEW] 14대 신탁사 + 자산운용사
+        trusts = {
+            "한국토지신탁": "034830", "한국자산신탁": "123890",
+            "KB부동산신탁": "KB부동산신탁", "하나자산신탁": "하나자산신탁",
+            "신한자산신탁": "신한자산신탁", "우리자산신탁": "우리자산신탁",
+            "코람코자산신탁": "코람코자산신탁", "대한토지신탁": "대한토지신탁",
+            "교보자산신탁": "교보자산신탁", "무궁화신탁": "무궁화신탁",
+            "한국투자부동산신탁": "한국투자부동산신탁", "대신자산신탁": "대신자산신탁",
+            "신영부동산신탁": "신영부동산신탁", "NH농협리츠운용": "NH농협리츠운용",
+            "이지스자산운용": "이지스자산운용", "마스턴투자운용": "마스턴투자운용"
+        }
+        
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.markdown("##### 🏛️ 분석할 신탁사 선택 (14대 메이저 + 운용사)")
+            target_trusts_keys = st.multiselect(
+                "체크박스에서 신탁사를 선택하소 (기본: 전체 선택)",
+                options=list(trusts.keys()),
+                default=list(trusts.keys())
+            )
+        with col2:
+            st.markdown("##### 📅 검색 기간")
+            date_opt = st.radio("기간 선택", ["최근 6개월", "최근 1년"])
+
+        final_trust_targets = {}
+        for k in target_trusts_keys: final_trust_targets[k] = trusts[k]
+
+        if st.button("🔍 신탁/개발사업 조회"):
+            st.divider()
+            ed = datetime.now(); days_back = 180 if date_opt == "최근 6개월" else 365; stt = ed - timedelta(days=days_back)
+            all_trust_leads = []
+            progress_bar = st.progress(0); status_text = st.empty(); total_targets = len(final_trust_targets); current_idx = 0
+
+            for name, code in final_trust_targets.items():
+                current_idx += 1; status_text.text(f"🚧 {name} 사업 찾는 중... ({current_idx}/{total_targets})"); progress_bar.progress(current_idx / total_targets)
+                try:
+                    rpts = dart.list(code, start=stt.strftime('%Y-%m-%d'), end=ed.strftime('%Y-%m-%d'))
+                    if rpts is None or rpts.empty: continue
+                    # 신탁사용 키워드
+                    mask = rpts['report_nm'].str.contains("신탁계약|정비사업|리츠|부동산투자|유형자산|특수목적")
+                    leads = rpts[mask]; leads = leads.head(5) # 신탁사는 공시가 많아서 5개만
+                    
+                    for i, r in leads.iterrows():
+                        # 신탁 전용 파싱
+                        proj_name, location = extract_trust_details(dart, r['rcept_no'])
+                        # 사업명 없으면 제목으로 대체
+                        display_proj = proj_name if proj_name != "-" else r['report_nm']
+
+                        all_trust_leads.append({
                             "날짜": r['rcept_dt'],
-                            "건설사": name.split(' ')[1] if '위' in name else name,
-                            "계약명 (현장)": display_name,
-                            "계약금액": c_amt,
-                            "준공예정일 (종료일)": c_end,
-                            "규모 (공사개요)": c_apt,
-                            "금액(숫자)": c_val,
+                            "신탁사": name,
+                            "사업명 (현장)": display_proj,
+                            "위치": location,
                             "공시제목": r['report_nm'],
                             "링크": f"http://dart.fss.or.kr/dsaf001/main.do?rcpNo={r['rcept_no']}"
                         })
                 except: continue
-            
-            progress_bar.empty()
-            status_text.empty()
 
-            if not all_leads:
-                st.warning("조건에 맞는 수주 공시가 없데이.")
+            progress_bar.empty(); status_text.empty()
+            if not all_trust_leads: st.warning("조건에 맞는 신탁 계약이 없데이.")
             else:
-                df = pd.DataFrame(all_leads)
-                df = df.sort_values(by="날짜", ascending=False)
-                
-                c1, c2 = st.columns([8, 2])
-                c1.success(f"총 {len(df)}건의 알짜배기 현장 발견! (최근 순)")
-                
-                with c2:
-                    csv = df.to_csv(index=False).encode('utf-8-sig')
-                    st.download_button(
-                        label="💾 엑셀(CSV) 다운로드",
-                        data=csv,
-                        file_name='construction_leads.csv',
-                        mime='text/csv',
-                    )
+                df = pd.DataFrame(all_trust_leads); df = df.sort_values(by="날짜", ascending=False)
+                c1, c2 = st.columns([8, 2]); c1.success(f"총 {len(df)}건의 초기 개발사업 발견! (설계 영업 타이밍)")
+                with c2: csv = df.to_csv(index=False).encode('utf-8-sig'); st.download_button(label="💾 엑셀 다운로드", data=csv, file_name='trust_leads.csv', mime='text/csv')
                 
                 for i, row in df.iterrows():
-                    dt = row['날짜']
-                    fmt_dt = f"{dt[0:4]}-{dt[4:6]}-{dt[6:8]}"
-                    
-                    with st.expander(f"[{fmt_dt}] {row['건설사']} - {row['계약명 (현장)']}"):
-                        c1, c2 = st.columns([3, 1])
-                        with c1:
-                            st.markdown(f"**🏗️ 현장명:** {row['계약명 (현장)']}")
-                            st.markdown(f"**💵 계약금액:** :red[**{row['계약금액']}**]")
-                            st.markdown(f"**🗓️ 준공예정(종료일):** **{row['준공예정일 (종료일)']}**")
-                            # [NEW] 아파트 규모 표시
-                            if row['규모 (공사개요)']:
-                                st.markdown(f"**🏢 공사개요:** {row['규모 (공사개요)']}")
-                            st.caption(f"공시제목: {row['공시제목']}")
-                        with c2:
-                            st.link_button("📄 원문 보기", row['링크'])
+                    dt = row['날짜']; fmt_dt = f"{dt[0:4]}-{dt[4:6]}-{dt[6:8]}"
+                    with st.expander(f"[{fmt_dt}] {row['신탁사']} - {row['사업명 (현장)']}"):
+                        st.markdown(f"**📍 위치:** {row['위치']}")
+                        st.markdown(f"**🏷️ 공시제목:** {row['공시제목']}")
+                        st.info("💡 이건 **초기 단계**일 확률이 높다. 설계사무소나 시행팀 알아보고 먼저 찔러봐라!")
+                        st.link_button("📄 원문 보기", row['링크'])
