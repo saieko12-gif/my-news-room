@@ -66,6 +66,7 @@ try: st.sidebar.image("logo.png", use_column_width=True)
 except: pass
 
 st.sidebar.header("🛠️ 설정")
+# [변경] 탭 4개로 확장
 mode = st.sidebar.radio("모드 선택", 
     ["📰 뉴스 모니터링", "🏢 기업 공시 & 재무제표", "🏗️ 수주/계약 현황 (Lead)", "🏛️ 신탁/시행사 발굴 (Early Bird)"]
 )
@@ -309,21 +310,28 @@ def extract_contract_details(dart, rcp_no):
     except Exception as e: return "-", "-", 0, "-", ""
     return contract_name, contract_amt, amt_val, end_date, apt_desc
 
-# 신탁사 파싱
+# [NEW] 신탁사 파싱 전용 함수
 def extract_trust_details(dart, rcp_no):
     project_name = "-"; location = "-"
     try:
         xml_text = dart.document(rcp_no)
+        # 1. 사업명/현장명 추출
         proj_match = re.search(r'(사업명|신탁명칭|현장명).*?</td>.*?<td.*?>(.*?)</td>', xml_text, re.DOTALL)
-        if proj_match: project_name = re.sub('<.*?>', '', proj_match.group(2)).strip()
+        if proj_match:
+            project_name = re.sub('<.*?>', '', proj_match.group(2)).strip()
         else:
+            # 사업명이 표에 없을 경우 텍스트에서 검색
             text_match = re.search(r'사업명\s*:\s*(.*?)(<br|\n)', xml_text)
             if text_match: project_name = re.sub('<.*?>', '', text_match.group(1)).strip()
 
+        # 2. 소재지/위치 추출
         loc_match = re.search(r'(소재지|위치|대지위치).*?</td>.*?<td.*?>(.*?)</td>', xml_text, re.DOTALL)
-        if loc_match: location = re.sub('<.*?>', '', loc_match.group(2)).strip()[:30] + "..."
+        if loc_match:
+            location = re.sub('<.*?>', '', loc_match.group(2)).strip()[:30] + "..." # 너무 길면 자름
+
         return project_name, location
-    except: return "-", "-"
+    except:
+        return "-", "-"
 
 # ---------------------------------------------------------
 # [탭 1] 뉴스 모니터링
@@ -396,7 +404,7 @@ if mode == "📰 뉴스 모니터링":
                 st.link_button("원문 보기", n['link'])
 
 # ---------------------------------------------------------
-# [탭 2] 기업 공시 & 재무제표 (차트 옵션 통합)
+# [탭 2] 기업 공시 & 재무제표
 # ---------------------------------------------------------
 elif mode == "🏢 기업 공시 & 재무제표":
     st.title("🏢 기업 분석 (상장사 + 신탁사)")
@@ -552,7 +560,7 @@ elif mode == "🏗️ 수주/계약 현황 (Lead)":
                         with c2: st.link_button("📄 원문 보기", row['링크'])
 
 # ---------------------------------------------------------
-# [탭 4] 신탁/시행사 발굴 (조회 조건 강화)
+# [탭 4] 신탁/시행사 발굴 (신규)
 # ---------------------------------------------------------
 elif mode == "🏛️ 신탁/시행사 발굴 (Early Bird)":
     st.title("🏛️ 신탁사/시행사 발굴 (초기 영업용)")
@@ -561,6 +569,7 @@ elif mode == "🏛️ 신탁/시행사 발굴 (Early Bird)":
     dart = get_dart_system()
     if dart is None: st.error("API 연결 실패")
     else:
+        # [NEW] 14대 신탁사 + 자산운용사
         trusts = {
             "한국토지신탁": "034830", "한국자산신탁": "123890",
             "KB부동산신탁": "KB부동산신탁", "하나자산신탁": "하나자산신탁",
@@ -581,26 +590,15 @@ elif mode == "🏛️ 신탁/시행사 발굴 (Early Bird)":
                 default=list(trusts.keys())
             )
         with col2:
-            st.markdown("##### 📅 검색 기간 (최신순)")
-            # [변경] 기간 단축 옵션 제공
-            date_opt = st.radio("기간 선택", ["최근 1개월", "최근 3개월", "최근 6개월"], index=1)
-            
-        # [변경] 제목 키워드 필터 추가
-        search_query = st.text_input("🔎 제목 키워드 필터 (선택사항, 예: 대구, 오피스텔)", placeholder="입력하면 제목에 이 단어가 있는 것만 쏙 골라온다! (속도 개빠름)")
+            st.markdown("##### 📅 검색 기간")
+            date_opt = st.radio("기간 선택", ["최근 6개월", "최근 1년"])
 
         final_trust_targets = {}
         for k in target_trusts_keys: final_trust_targets[k] = trusts[k]
 
-        if st.button("🔍 신탁/개발사업 조회 (필터 적용)"):
+        if st.button("🔍 신탁/개발사업 조회"):
             st.divider()
-            
-            # 날짜 계산
-            ed = datetime.now()
-            if date_opt == "최근 1개월": days_back = 30
-            elif date_opt == "최근 3개월": days_back = 90
-            else: days_back = 180
-            stt = ed - timedelta(days=days_back)
-            
+            ed = datetime.now(); days_back = 180 if date_opt == "최근 6개월" else 365; stt = ed - timedelta(days=days_back)
             all_trust_leads = []
             progress_bar = st.progress(0); status_text = st.empty(); total_targets = len(final_trust_targets); current_idx = 0
 
@@ -609,20 +607,14 @@ elif mode == "🏛️ 신탁/시행사 발굴 (Early Bird)":
                 try:
                     rpts = dart.list(code, start=stt.strftime('%Y-%m-%d'), end=ed.strftime('%Y-%m-%d'))
                     if rpts is None or rpts.empty: continue
-                    
-                    # 1. 기본 키워드 필터
+                    # 신탁사용 키워드
                     mask = rpts['report_nm'].str.contains("신탁계약|정비사업|리츠|부동산투자|유형자산|특수목적")
-                    leads = rpts[mask]
-                    
-                    # 2. [핵심] 사용자 입력 키워드 2차 필터 (있을 경우만)
-                    if search_query:
-                        leads = leads[leads['report_nm'].str.contains(search_query)]
-                    
-                    # 3. 개수 제한 (회사당 최대 5개 - 속도 위해)
-                    leads = leads.head(5)
+                    leads = rpts[mask]; leads = leads.head(5) # 신탁사는 공시가 많아서 5개만
                     
                     for i, r in leads.iterrows():
+                        # 신탁 전용 파싱
                         proj_name, location = extract_trust_details(dart, r['rcept_no'])
+                        # 사업명 없으면 제목으로 대체
                         display_proj = proj_name if proj_name != "-" else r['report_nm']
 
                         all_trust_leads.append({
@@ -636,12 +628,10 @@ elif mode == "🏛️ 신탁/시행사 발굴 (Early Bird)":
                 except: continue
 
             progress_bar.empty(); status_text.empty()
-            
-            if not all_trust_leads:
-                st.warning(f"조건에 맞는 계약이 없데이. (키워드: {search_query if search_query else '전체'})")
+            if not all_trust_leads: st.warning("조건에 맞는 신탁 계약이 없데이.")
             else:
                 df = pd.DataFrame(all_trust_leads); df = df.sort_values(by="날짜", ascending=False)
-                c1, c2 = st.columns([8, 2]); c1.success(f"총 {len(df)}건의 초기 개발사업 발견!")
+                c1, c2 = st.columns([8, 2]); c1.success(f"총 {len(df)}건의 초기 개발사업 발견! (설계 영업 타이밍)")
                 with c2: csv = df.to_csv(index=False).encode('utf-8-sig'); st.download_button(label="💾 엑셀 다운로드", data=csv, file_name='trust_leads.csv', mime='text/csv')
                 
                 for i, row in df.iterrows():
