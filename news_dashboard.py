@@ -56,7 +56,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# [중요] 친구가 받아온 진짜 API 키 적용 완료!
+# [중요] 친구 API 키 적용
 DART_API_KEY = "3522c934d5547db5cba3f51f8d832e1a82ebce55"
 
 # ---------------------------------------------------------
@@ -121,11 +121,9 @@ def get_dart_system():
         dart = OpenDartReader(DART_API_KEY) 
         return dart
     except Exception as e:
-        # 에러 발생 시 로그 출력 (터미널에서 확인 가능)
         print(f"DART API Error: {e}")
         return None
 
-# 재무제표 분석 함수
 def get_financial_summary_advanced(dart, corp_name):
     years = [2025, 2024]
     codes = [('11011','사업보고서'), ('11014','3분기'), ('11012','반기'), ('11013','1분기')]
@@ -228,7 +226,6 @@ def get_financial_summary_advanced(dart, corp_name):
             except: continue
     return None
 
-# 차트 함수 (영역 차트 - Y축 스케일링)
 def get_stock_chart(target, code, days):
     try:
         df = fdr.DataReader(code, datetime.now()-timedelta(days=days), datetime.now())
@@ -236,7 +233,6 @@ def get_stock_chart(target, code, days):
         l = df['Close'].iloc[-1]; p = df['Close'].iloc[-2]; c = ((l-p)/p)*100
         clr = '#ff4b4b' if c>0 else '#4b4bff'
         
-        # Y축 스케일링
         min_p = df['Close'].min()
         max_p = df['Close'].max()
         margin = (max_p - min_p) * 0.1
@@ -255,7 +251,6 @@ def get_stock_chart(target, code, days):
         return fig, l, c
     except: return None
 
-# 고급 차트 함수 (캔들)
 def plot_advanced_chart(code, days, interval):
     try:
         start_date = datetime.now() - timedelta(days=days)
@@ -288,12 +283,10 @@ def plot_advanced_chart(code, days, interval):
         return fig, last_val, chg
     except Exception as e: return None, 0, 0
 
-# 수주현장 파싱 (표 파싱 + 기재정정 대응)
 def extract_contract_details(dart, rcp_no):
     contract_name = "-"; contract_amt = "-"; amt_val = 0; end_date = "-"; apt_desc = ""
     try:
         xml_text = dart.document(rcp_no)
-        # 아파트 규모 Regex 추출
         apt_info = []
         dong_match = re.search(r'(\d+)\s*개?\s*동', xml_text)
         if dong_match: apt_info.append(f"{dong_match.group(1)}개동")
@@ -301,7 +294,6 @@ def extract_contract_details(dart, rcp_no):
         if sede_match: apt_info.append(f"{sede_match.group(1)}세대")
         apt_desc = ", ".join(apt_info)
 
-        # 표 파싱 시도
         try: dfs = pd.read_html(io.StringIO(xml_text))
         except: dfs = []
 
@@ -310,12 +302,10 @@ def extract_contract_details(dart, rcp_no):
             df = df.fillna("")
             for idx, row in df.iterrows():
                 row_str = " ".join(map(str, row.values))
-                # 계약명
                 if not contract_name or contract_name == "-":
                     if "계약명" in row_str or "공사명" in row_str:
                         val = str(row.iloc[-1]).strip()
                         if val and val != "nan": contract_name = val
-                # 계약금액 (정정 후)
                 if not found_amt:
                     if "계약금액" in row_str or "확정계약금액" in row_str:
                         raw_val = str(row.iloc[-1])
@@ -326,7 +316,6 @@ def extract_contract_details(dart, rcp_no):
                                 amt_val = int(total_str)
                                 contract_amt = f"{amt_val / 100000000:,.1f} 억"
                                 found_amt = True
-                # 계약기간 (정정 후)
                 if not found_date:
                     if "계약기간" in row_str or "종료일" in row_str or "공사기간" in row_str:
                         raw_val = str(row.iloc[-1])
@@ -336,7 +325,6 @@ def extract_contract_details(dart, rcp_no):
                             end_date = dates[-1]
                             found_date = True
         
-        # Regex Fallback (표에서 못 찾았을 때)
         if contract_amt == "-":
             amt_match = re.search(r'(계약금액|확정계약금액).*?</td>.*?<td.*?>(.*?)</td>', xml_text, re.DOTALL)
             if amt_match:
@@ -353,7 +341,6 @@ def extract_contract_details(dart, rcp_no):
     except Exception as e: return "-", "-", 0, "-", ""
     return contract_name, contract_amt, amt_val, end_date, apt_desc
 
-# 신탁사 파싱 전용 함수
 def extract_trust_details(dart, rcp_no):
     project_name = "-"; location = "-"
     try:
@@ -368,6 +355,7 @@ def extract_trust_details(dart, rcp_no):
         loc_match = re.search(r'(소재지|위치|대지위치).*?</td>.*?<td.*?>(.*?)</td>', xml_text, re.DOTALL)
         if loc_match:
             location = re.sub('<.*?>', '', loc_match.group(2)).strip()[:30] + "..."
+
         return project_name, location
     except:
         return "-", "-"
@@ -399,7 +387,9 @@ if mode == "📰 뉴스 모니터링":
         if st.button("📈 건설경기/통계"): st.session_state['search_keywords'] = preset_trend
         if st.button("🏛️ 정부 정책/규제"): st.session_state['search_keywords'] = preset_policy
     
-    user_input = st.sidebar.text_area("검색 키워드 (쉼표로 구분)", key='search_keywords', height=250)
+    # [변경] 촌스러운 문구 날리고 깔끔하게 단축 (Ctrl+Enter 안내 추가)
+    st.sidebar.markdown("💡 **Tip:** 키워드 직접 변경 가능 (입력 후 `Ctrl + Enter` 적용)")
+    user_input = st.sidebar.text_area("✍️ 검색 키워드 (쉼표로 구분)", key='search_keywords', height=250)
     keywords = [k.strip() for k in user_input.split(',') if k.strip()]
     
     period = st.sidebar.radio("기간 선택", ["최근 24시간", "최근 3일", "최근 1주일", "최근 1개월", "최근 3개월", "전체 보기"], index=2)
@@ -599,7 +589,7 @@ elif mode == "🏗️ 수주/계약 현황 (Lead)":
                         with c2: st.link_button("📄 원문 보기", row['링크'])
 
 # ---------------------------------------------------------
-# [탭 4] 신탁/시행사 발굴 (신규)
+# [탭 4] 신탁/시행사 발굴
 # ---------------------------------------------------------
 elif mode == "🏛️ 신탁/시행사 발굴 (Early Bird)":
     st.title("🏛️ 신탁사/시행사 발굴 (초기 영업용)")
@@ -630,10 +620,8 @@ elif mode == "🏛️ 신탁/시행사 발굴 (Early Bird)":
             )
         with col2:
             st.markdown("##### 📅 검색 기간 (최신순)")
-            # [변경] 기간 단축 옵션 제공
             date_opt = st.radio("기간 선택", ["최근 1개월", "최근 3개월", "최근 6개월"], index=1)
             
-        # [변경] 제목 키워드 필터 추가
         search_query = st.text_input("🔎 제목 키워드 필터 (선택사항, 예: 대구, 오피스텔)", placeholder="입력하면 제목에 이 단어가 있는 것만 쏙 골라온다! (속도 개빠름)")
 
         final_trust_targets = {}
@@ -641,8 +629,6 @@ elif mode == "🏛️ 신탁/시행사 발굴 (Early Bird)":
 
         if st.button("🔍 신탁/개발사업 조회 (필터 적용)"):
             st.divider()
-            
-            # 날짜 계산
             ed = datetime.now()
             if date_opt == "최근 1개월": days_back = 30
             elif date_opt == "최근 3개월": days_back = 90
@@ -658,16 +644,13 @@ elif mode == "🏛️ 신탁/시행사 발굴 (Early Bird)":
                     rpts = dart.list(code, start=stt.strftime('%Y-%m-%d'), end=ed.strftime('%Y-%m-%d'))
                     if rpts is None or rpts.empty: continue
                     
-                    # 1. 기본 키워드 필터
                     mask = rpts['report_nm'].str.contains("신탁계약|정비사업|리츠|부동산투자|유형자산|특수목적")
                     leads = rpts[mask]
                     
-                    # 2. [핵심] 사용자 입력 키워드 2차 필터 (있을 경우만)
                     if search_query:
                         leads = leads[leads['report_nm'].str.contains(search_query)]
                     
-                    # 3. 개수 제한 (회사당 최대 5개 - 속도 위해)
-                    leads = leads.head(5)
+                    leads = leads.head(5) 
                     
                     for i, r in leads.iterrows():
                         proj_name, location = extract_trust_details(dart, r['rcept_no'])
