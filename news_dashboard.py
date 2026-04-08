@@ -66,7 +66,6 @@ try: st.sidebar.image("logo.png", use_column_width=True)
 except: pass
 
 st.sidebar.header("🛠️ 설정")
-# [변경] 탭 4개로 확장
 mode = st.sidebar.radio("모드 선택", 
     ["📰 뉴스 모니터링", "🏢 기업 공시 & 재무제표", "🏗️ 수주/계약 현황 (Lead)", "🏛️ 신탁/시행사 발굴 (Early Bird)"]
 )
@@ -359,20 +358,16 @@ def extract_trust_details(dart, rcp_no):
     project_name = "-"; location = "-"
     try:
         xml_text = dart.document(rcp_no)
-        # 1. 사업명/현장명 추출
         proj_match = re.search(r'(사업명|신탁명칭|현장명).*?</td>.*?<td.*?>(.*?)</td>', xml_text, re.DOTALL)
         if proj_match:
             project_name = re.sub('<.*?>', '', proj_match.group(2)).strip()
         else:
-            # 사업명이 표에 없을 경우 텍스트에서 검색
             text_match = re.search(r'사업명\s*:\s*(.*?)(<br|\n)', xml_text)
             if text_match: project_name = re.sub('<.*?>', '', text_match.group(1)).strip()
 
-        # 2. 소재지/위치 추출
         loc_match = re.search(r'(소재지|위치|대지위치).*?</td>.*?<td.*?>(.*?)</td>', xml_text, re.DOTALL)
         if loc_match:
-            location = re.sub('<.*?>', '', loc_match.group(2)).strip()[:30] + "..." # 너무 길면 자름
-
+            location = re.sub('<.*?>', '', loc_match.group(2)).strip()[:30] + "..."
         return project_name, location
     except:
         return "-", "-"
@@ -404,9 +399,7 @@ if mode == "📰 뉴스 모니터링":
         if st.button("📈 건설경기/통계"): st.session_state['search_keywords'] = preset_trend
         if st.button("🏛️ 정부 정책/규제"): st.session_state['search_keywords'] = preset_policy
     
-    # [수정] 안내 문구 및 입력창 제목 직관적으로 변경
-    st.sidebar.markdown("💡 **Tip:** 위 버튼을 누르거나, **아래 창에서 직접 키워드를 지우고 새로 입력**해보소!")
-    user_input = st.sidebar.text_area("✍️ 검색 키워드 (직접 수정/추가 가능, 쉼표로 구분)", key='search_keywords', height=250)
+    user_input = st.sidebar.text_area("검색 키워드 (쉼표로 구분)", key='search_keywords', height=250)
     keywords = [k.strip() for k in user_input.split(',') if k.strip()]
     
     period = st.sidebar.radio("기간 선택", ["최근 24시간", "최근 3일", "최근 1주일", "최근 1개월", "최근 3개월", "전체 보기"], index=2)
