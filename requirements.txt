@@ -1,7 +1,7 @@
 streamlit
 feedparser
-finance-datareader
 pandas
 plotly
-opendartreader
-PublicDataReader
+OpenDartReader
+finance-datareader
+python-dateutil
