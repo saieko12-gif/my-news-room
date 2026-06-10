@@ -2,5 +2,5 @@ streamlit
 feedparser
 pandas
 plotly
-opendartreader
+OpenDartReader
 finance-datareader
