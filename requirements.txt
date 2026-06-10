@@ -2,5 +2,8 @@ streamlit
 feedparser
 pandas
 plotly
-OpenDartReader
+opendartreader
 finance-datareader
+python-dateutil
+lxml
+requests
